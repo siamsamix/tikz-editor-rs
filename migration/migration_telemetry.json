@@ -7,14 +7,11 @@
   "scope_summary": "",
   "started_at_epoch": 1793528080.999677,
   "completed_at": null,
-  "_active_bucket": {
-    "name": "rewrite",
-    "started_at": 1793606569.9905367
-  },
+  "_active_bucket": null,
   "_bucket_seconds": {
     "discovery": 259.7900640964508,
     "blueprint": 1119.8943221569061,
-    "rewrite": 0.0,
+    "rewrite": 13037.895859479904,
     "test_heal": 0.0,
     "parity": 0.0,
     "pgo_bench": 0.0
@@ -42,22 +39,22 @@
       "max_nesting_depth": 15,
       "avg_fn_loc": 11,
       "hazards_count": 1376,
-      "latent_bugs_found": 12
+      "latent_bugs_found": 16
     },
     "after": {
-      "scanned": false,
-      "files": 0,
-      "code_loc": 0,
-      "comment_loc": 0,
-      "comment_pct": null,
-      "max_file_loc": 0,
-      "avg_file_loc": 0,
-      "files_under_400_pct": null,
-      "doc_tests": 0,
-      "max_nesting_depth": null,
-      "avg_fn_loc": null,
-      "unsafe_blocks": null,
-      "forbid_unsafe": false,
+      "scanned": true,
+      "files": 44,
+      "code_loc": 7938,
+      "comment_loc": 1937,
+      "comment_pct": 24.4,
+      "max_file_loc": 642,
+      "avg_file_loc": 224,
+      "files_under_400_pct": 88.6,
+      "doc_tests": 45,
+      "max_nesting_depth": 9,
+      "avg_fn_loc": 17,
+      "unsafe_blocks": 0,
+      "forbid_unsafe": true,
       "branch_coverage_pct": null,
       "clippy_warnings": 0
     }
@@ -242,6 +239,48 @@
       "title": "Cargo.lock v4 and egui 0.33 need cargo >= 1.78/1.88; apt gives 1.75",
       "file": "rust/Cargo.lock",
       "description": "Sandbox builds a scratch workspace without tikz-app, proptest pinned to 1.4.0 and tempfile 3.10.1 (edition2024 crates in newer resolves). Repo manifests untouched. tikz-app and llvm-profdata/PGO need a newer toolchain."
+    },
+    {
+      "category": "architecture",
+      "title": "egui shell replaces browser SVG pointer machinery with geometric picking",
+      "file": "rust/crates/tikz-app/src/canvas.rs",
+      "description": "Legacy selection relied on the browser's SVG pointer-events and an 18px HitRegion pad (blueprint row 6). The Rust shell splits into document.rs (compile cache + diagnostics + file I/O), camera.rs (pan/zoom + world/screen mapping), canvas.rs (paint + hit_test picking) and app.rs (panels). tikz-core gained hit_test::distance_to_polyline/hit_test so picking is pure, headless and unit-tested instead of DOM-driven."
+    },
+    {
+      "category": "latent_bug",
+      "title": "eframe 'wgpu' feature without a wgpu backend panics at startup",
+      "file": "rust/Cargo.toml",
+      "description": "Workspace used eframe default-features=false with features=['wgpu']; eframe's 'wgpu' feature only enables the renderer crate, not any backend, so wgpu::Instance::new panics ('No wgpu backend feature that is implemented for the target platform was enabled'). Fixed by adding an explicit wgpu workspace dependency (features vulkan+gles) that unifies onto the same wgpu crate eframe links; verified by a smoke run of tikz-app that stays alive."
+    },
+    {
+      "category": "latent_bug",
+      "title": "SVG arc sweep flag is inverted on emit because output is y-flipped",
+      "file": "rust/crates/tikz-core/src/svg_emit.rs",
+      "description": "Legacy svg/emit.ts:920 writes 'sweep = command.sweep ? 0 : 1'. The port models canvas-space (y-up) arcs where sweep=true means counter-clockwise, and inverts the flag on emit. Getting this wrong swaps the drawn half of every circle/arc while all numbers still look plausible; it was caught only by A/B diffing 'arc (0:180:0.75)' against goldens-slice3/geometry.svg."
+    },
+    {
+      "category": "latent_bug",
+      "title": "A filled rectangle emits a duplicate leading M (its own subpath)",
+      "file": "rust/crates/tikz-core/src/semantic/pathbuild.rs",
+      "description": "With fill != none legacy keeps the statement's active path open, so '(x,y) rectangle (a,b)' emits 'M p M p L ... Z' - two moves at the same point - while the same rectangle without fill emits a single M (compare grid.svg path:3 with goldens-slice3/styled.svg path:6). The port reproduces the duplicate because svg_diff compares document order element by element."
+    },
+    {
+      "category": "latent_bug",
+      "title": "Shape corners are transformed individually, so rotated frames rotate the quad",
+      "file": "rust/crates/tikz-core/src/semantic/pathbuild.rs",
+      "description": "rectangle/|-/-|/grid must be built in local coordinates and then mapped point by point through the frame transform. Building the axis-aligned quad from already-transformed endpoints matches every pure scale/shift case but silently produces an unrotated box under 'rotate around', which goldens-slice3/geometry.svg exposes."
+    },
+    {
+      "category": "hygiene",
+      "title": "Two semantic modules still exceed the 400-LOC target",
+      "file": "rust/crates/tikz-core/src/semantic/style.rs",
+      "description": "After the slice-3 split (pathbuild -> pathscan + shapes) the census reports 88.6% of files under 400 LOC with style.rs (option-application match, 500 lines) and pathbuild.rs (413 lines) still above it. Both are single-purpose and testable, so this is left as a documented deviation to be split (style -> style_flags/style_kv) together with the next option-surface slice."
+    },
+    {
+      "category": "architecture",
+      "title": "Warnings keep partial figures on screen instead of failing the document",
+      "file": "rust/crates/tikz-core/src/semantic/style.rs",
+      "description": "Diagnostics now carry Severity. Errors (unresolvable coordinates, unsupported path keywords) still abort the document, but warnings (nodes, arrows, unimplemented options) let the rest of the figure render: the CLI prints them and exits 0, the app lists them in the diagnostics panel with counts. This is what makes incremental porting measurable - corpus documents that used to render nothing now render their paths."
     }
   ],
   "test_iterations": [
@@ -264,6 +303,26 @@
       "clippy_warnings": 0,
       "failures_summary": "all green",
       "fix_applied": "doctest span -> 19..22/20..21; parenthesised bool in coordinate.rs; dropped useless .into() in stmt_macro.rs; assert_eq!(x,bool)->assert!"
+    },
+    {
+      "iteration": 3,
+      "total": 129,
+      "passed": 129,
+      "failed": 0,
+      "coverage_pct": null,
+      "clippy_warnings": 0,
+      "failures_summary": "none: 99 unit/integration + 30 doc tests green, 0 clippy warnings (workspace --all-targets)",
+      "fix_applied": "app slice added camera/document/canvas/app modules with doc-tests; canvas match arms as statements; Stroke::new width annotated f32"
+    },
+    {
+      "iteration": 4,
+      "total": 190,
+      "passed": 190,
+      "failed": 0,
+      "coverage_pct": null,
+      "clippy_warnings": 0,
+      "failures_summary": "none: 146 unit/integration + 44 doc tests green across the three crates, 0 clippy warnings on --workspace --all-targets",
+      "fix_applied": "slice 3 (semantic layer) added expr/color/style/transform/pathbuild modules; scanner no longer stalls on +/++ prefixes; clippy clean"
     }
   ],
   "parity_iterations": [
@@ -274,6 +333,22 @@
       "max_abs_error": "0",
       "divergence_cause": "10/11 goldens contain TeX-mode text (data-text-renderer=tex, per-glyph <path>). svg_diff.py needs equal element counts and glyph presence; viewBox, y-flip constant and node box sizes all depend on Latin Modern glyph metrics, so even path d values shift. Not fixable without the deferred text engine. Rust emits explicit diagnostics (exit 3) for these, never a wrong SVG. Only minimal.tex (no text) is in reach.",
       "fix_applied": "none yet; minimal passes byte-identical (cmp) and via svg_diff 2/2 elems max_abs_err=0"
+    },
+    {
+      "iteration": 2,
+      "seeds_tested": 14,
+      "seeds_passed": 4,
+      "max_abs_error": "0",
+      "divergence_cause": "slice-3 fixtures (styled/geometry/gridlines, draw-only: widths, dashes, colours+mixes, fills, opacity, even-odd, relative/polar coords, frame transforms, rectangle/circle/ellipse/arc/grid) are all byte-parity at eps=1e-3 with max_abs_err=0. Main corpus is 1/11: minimal passes; comments/coords/grid/multiline/shapes-new diverge on element count because nodes and TeX text are still warnings (the glyph/wrapper elements exist in the goldens), multi-figure-basic needs multi-figure support, and node-graph/paths/styles need .style definitions, node distance and arrow specs.",
+      "fix_applied": "four parity defects fixed by diffing: rectangle corners transformed individually;  keeps waiting for its corner coordinate; ellipse center no longer double-transformed; arc radii transformed exactly once (explicit units ignore the frame); arc sweep inverted on emit; cycle appends an explicit line back to the subpath start; filled rectangle repeats its M."
+    },
+    {
+      "iteration": 3,
+      "seeds_tested": 3,
+      "seeds_passed": 3,
+      "max_abs_error": "0",
+      "divergence_cause": "none: all three slice-3 fixtures byte-identical after the module split (styled 11/11, geometry 10/10, gridlines 17/17 elements, max_abs_err=0)",
+      "fix_applied": "module split only (pathbuild -> pathscan + shapes); no emitter change, parity re-verified"
     }
   ],
   "benchmarks": [

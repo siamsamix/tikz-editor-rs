@@ -1,0 +1,1083 @@
+From dfa99f1ee1096c3ba754a65b5d93895b1e5162e8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 08:08:19 +0000
+Subject: [PATCH] rust: first verified slice (svg numbers, scene, emit, render,
+ CLI) + test/clippy fixes
+
+- add svg_numbers (ECMAScript toFixed(4) tie rule), scene, svg_emit, render facade
+  and `tikz-cli render`; unsupported TikZ yields diagnostics, never a silent drop
+- fix tex_lex panic on `\` followed by a multibyte char (found by proptest)
+- fix region.rs doctest spans and 8 clippy lints
+- migration ledger: 2 test iterations, 1 parity iteration, 3 findings
+
+Parity vs committed goldens: 1/11 (minimal is byte-identical). The other 10 contain
+TeX-mode glyph text and need the deferred text engine; see migration ledger.
+---
+ migration/migration_telemetry.json        |  58 ++++-
+ rust/crates/tikz-cli/src/main.rs          |  70 +++++-
+ rust/crates/tikz-core/src/coordinate.rs   |   2 +-
+ rust/crates/tikz-core/src/lib.rs          |   4 +
+ rust/crates/tikz-core/src/region.rs       |   4 +-
+ rust/crates/tikz-core/src/render.rs       | 257 ++++++++++++++++++++++
+ rust/crates/tikz-core/src/render/tests.rs | 101 +++++++++
+ rust/crates/tikz-core/src/scene.rs        |  69 ++++++
+ rust/crates/tikz-core/src/stmt_macro.rs   |  13 +-
+ rust/crates/tikz-core/src/svg_emit.rs     | 135 ++++++++++++
+ rust/crates/tikz-core/src/svg_numbers.rs  | 137 ++++++++++++
+ rust/crates/tikz-core/src/tex_lex.rs      |  18 +-
+ 12 files changed, 850 insertions(+), 18 deletions(-)
+ create mode 100644 rust/crates/tikz-core/src/render.rs
+ create mode 100644 rust/crates/tikz-core/src/render/tests.rs
+ create mode 100644 rust/crates/tikz-core/src/scene.rs
+ create mode 100644 rust/crates/tikz-core/src/svg_emit.rs
+ create mode 100644 rust/crates/tikz-core/src/svg_numbers.rs
+
+diff --git a/migration/migration_telemetry.json b/migration/migration_telemetry.json
+index 18e8e7ab..29ef0613 100644
+--- a/migration/migration_telemetry.json
++++ b/migration/migration_telemetry.json
+@@ -9,7 +9,7 @@
+   "completed_at": null,
+   "_active_bucket": {
+     "name": "rewrite",
+-    "started_at": 1793529467.391253
++    "started_at": 1793606569.9905367
+   },
+   "_bucket_seconds": {
+     "discovery": 259.7900640964508,
+@@ -42,7 +42,7 @@
+       "max_nesting_depth": 15,
+       "avg_fn_loc": 11,
+       "hazards_count": 1376,
+-      "latent_bugs_found": 11
++      "latent_bugs_found": 12
+     },
+     "after": {
+       "scanned": false,
+@@ -59,7 +59,7 @@
+       "unsafe_blocks": null,
+       "forbid_unsafe": false,
+       "branch_coverage_pct": null,
+-      "clippy_warnings": null
++      "clippy_warnings": 0
+     }
+   },
+   "opportunities": [
+@@ -224,10 +224,58 @@
+       "title": "Patch insertion anchored to next model's prior part",
+       "file": "packages/core/src/svg/patch.ts:64",
+       "description": "insertionIndex derives afterPartId from the next model's findPreviousPartIdInOrder with append-at-end fallback; a Rust rewrite must not switch to before-anchoring or edit-time ordering diverges."
++    },
++    {
++      "category": "latent_bug",
++      "title": "read_tex_control_sequence split a multibyte char after backslash",
++      "file": "rust/crates/tikz-core/src/tex_lex.rs:42",
++      "description": "Port used from+2 BYTES for control symbols; backslash followed by a non-ASCII char panicked on slice (found by proptest token_soup). JS indexes UTF-16 units so legacy never panics. Fixed: advance by len_utf8 of the next char, regression test added."
++    },
++    {
++      "category": "architecture",
++      "title": "Blueprint parity plan assumed wrapper geometry compares without text engine; goldens say otherwise",
++      "file": "migration/svg_diff.py",
++      "description": "Goldens were captured in TeX text mode. svg_diff.py requires identical element counts and glyph presence, and viewBox/flip/node sizes depend on glyph metrics. Option set: (a) port Latin Modern metrics + OT1 shaper, (b) add a geometry-only comparator mode plus new text-free goldens (needs a legacy run), (c) accept 1/11 as the parity ceiling for this slice."
++    },
++    {
++      "category": "hygiene",
++      "title": "Cargo.lock v4 and egui 0.33 need cargo >= 1.78/1.88; apt gives 1.75",
++      "file": "rust/Cargo.lock",
++      "description": "Sandbox builds a scratch workspace without tikz-app, proptest pinned to 1.4.0 and tempfile 3.10.1 (edition2024 crates in newer resolves). Repo manifests untouched. tikz-app and llvm-profdata/PGO need a newer toolchain."
++    }
++  ],
++  "test_iterations": [
++    {
++      "iteration": 1,
++      "total": 93,
++      "passed": 92,
++      "failed": 1,
++      "coverage_pct": null,
++      "clippy_warnings": 8,
++      "failures_summary": "doctest region::to_group_inner_span: span 17..20 pointed at '} {' not '{2}' (bytes are 19..22); 8 clippy lints (bool simplify, useless .into(), 6x assert_eq! on bool)",
++      "fix_applied": "none (baseline run on apt rustc 1.75, scratch workspace without tikz-app, proptest pinned 1.4.0)"
++    },
++    {
++      "iteration": 2,
++      "total": 93,
++      "passed": 93,
++      "failed": 0,
++      "coverage_pct": null,
++      "clippy_warnings": 0,
++      "failures_summary": "all green",
++      "fix_applied": "doctest span -> 19..22/20..21; parenthesised bool in coordinate.rs; dropped useless .into() in stmt_macro.rs; assert_eq!(x,bool)->assert!"
++    }
++  ],
++  "parity_iterations": [
++    {
++      "iteration": 1,
++      "seeds_tested": 11,
++      "seeds_passed": 1,
++      "max_abs_error": "0",
++      "divergence_cause": "10/11 goldens contain TeX-mode text (data-text-renderer=tex, per-glyph <path>). svg_diff.py needs equal element counts and glyph presence; viewBox, y-flip constant and node box sizes all depend on Latin Modern glyph metrics, so even path d values shift. Not fixable without the deferred text engine. Rust emits explicit diagnostics (exit 3) for these, never a wrong SVG. Only minimal.tex (no text) is in reach.",
++      "fix_applied": "none yet; minimal passes byte-identical (cmp) and via svg_diff 2/2 elems max_abs_err=0"
+     }
+   ],
+-  "test_iterations": [],
+-  "parity_iterations": [],
+   "benchmarks": [
+     {
+       "stage": "legacy_baseline",
+diff --git a/rust/crates/tikz-cli/src/main.rs b/rust/crates/tikz-cli/src/main.rs
+index a7e8763c..09d5c8b5 100644
+--- a/rust/crates/tikz-cli/src/main.rs
++++ b/rust/crates/tikz-cli/src/main.rs
+@@ -1,4 +1,70 @@
+ #![forbid(unsafe_code)]
+-fn main() {
+-    println!("scaffold");
++//! `tikz-cli`: headless renderer used for golden parity checks.
++//!
++//! ```text
++//! tikz-cli render <input.tex> <output.svg>
++//! ```
++//!
++//! Exit codes: `0` ok, `2` usage or I/O error, `3` the document uses TikZ
++//! the port does not support yet (diagnostics on stderr, no SVG written).
++
++use std::process::ExitCode;
++use tikz_core::render::{render_tex, Diagnostic};
++
++fn main() -> ExitCode {
++    let args: Vec<String> = std::env::args().skip(1).collect();
++    match args.as_slice() {
++        [cmd, input, output] if cmd == "render" => render(input, output),
++        _ => {
++            eprintln!("usage: tikz-cli render <input.tex> <output.svg>");
++            ExitCode::from(2)
++        }
++    }
++}
++
++fn render(input: &str, output: &str) -> ExitCode {
++    let source = match std::fs::read_to_string(input) {
++        Ok(text) => text,
++        Err(e) => {
++            eprintln!("{input}: {e}");
++            return ExitCode::from(2);
++        }
++    };
++    match render_tex(&source) {
++        Ok(svg) => match std::fs::write(output, svg) {
++            Ok(()) => ExitCode::SUCCESS,
++            Err(e) => {
++                eprintln!("{output}: {e}");
++                ExitCode::from(2)
++            }
++        },
++        Err(diagnostics) => {
++            for d in &diagnostics {
++                eprintln!("{input}:{}", describe(&source, d));
++            }
++            ExitCode::from(3)
++        }
++    }
++}
++
++/// `line:col: message` for a diagnostic (1-based, counted in chars).
++fn describe(source: &str, d: &Diagnostic) -> String {
++    let before = &source[..d.span.from.min(source.len())];
++    let line = before.matches('\n').count() + 1;
++    let col = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
++    format!("{line}:{col}: {}", d.message)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use tikz_core::span::Span;
++
++    #[test]
++    fn describe_reports_line_and_column() {
++        let d = Diagnostic { span: Span::new(6, 8), message: "bad".into() };
++        assert_eq!(describe("ab\ncd\nef", &d), "3:1: bad");
++        let d = Diagnostic { span: Span::new(4, 5), message: "bad".into() };
++        assert_eq!(describe("ab\ncd\nef", &d), "2:2: bad");
++    }
+ }
+diff --git a/rust/crates/tikz-core/src/coordinate.rs b/rust/crates/tikz-core/src/coordinate.rs
+index 4400c6da..e2f5dac7 100644
+--- a/rust/crates/tikz-core/src/coordinate.rs
++++ b/rust/crates/tikz-core/src/coordinate.rs
+@@ -312,7 +312,7 @@ fn contains_cs_colon(core: &str) -> bool {
+     while let Some(found) = lower[cursor..].find("cs") {
+         let start = cursor + found;
+         // Left `\b` for `cs`: JS word chars are ASCII [A-Za-z0-9_] only.
+-        if start > 0 && bytes[start - 1].is_ascii_alphanumeric() || start > 0 && bytes[start - 1] == b'_' {
++        if start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+             cursor = start + 1;
+             continue;
+         }
+diff --git a/rust/crates/tikz-core/src/lib.rs b/rust/crates/tikz-core/src/lib.rs
+index 06a81b51..24416eea 100644
+--- a/rust/crates/tikz-core/src/lib.rs
++++ b/rust/crates/tikz-core/src/lib.rs
+@@ -20,6 +20,8 @@ pub mod options;
+ pub mod option_classify;
+ pub mod prng;
+ pub mod region;
++pub mod render;
++pub mod scene;
+ pub mod span;
+ pub mod split;
+ pub mod stmt_foreach;
+@@ -27,4 +29,6 @@ pub mod stmt_macro;
+ pub mod stmt_style;
+ pub mod tex_lex;
+ pub mod tok;
++pub mod svg_emit;
++pub mod svg_numbers;
+ pub mod units;
+diff --git a/rust/crates/tikz-core/src/region.rs b/rust/crates/tikz-core/src/region.rs
+index 8f0fe2b9..9c5f3c5e 100644
+--- a/rust/crates/tikz-core/src/region.rs
++++ b/rust/crates/tikz-core/src/region.rs
+@@ -23,9 +23,9 @@ use crate::span::Span;
+ /// ```
+ /// use tikz_core::region::to_group_inner_span;
+ /// use tikz_core::span::Span;
+-/// // Group `{2}` in `\newcommand {\bar} {2}` sits at bytes 17..20.
++/// // Group `{2}` in `\newcommand {\bar} {2}` sits at bytes 19..22.
+ /// let source = "\\newcommand {\\bar} {2}";
+-/// assert_eq!(to_group_inner_span(Span::new(17, 20), source), Span::new(18, 19));
++/// assert_eq!(to_group_inner_span(Span::new(19, 22), source), Span::new(20, 21));
+ /// ```
+ pub fn to_group_inner_span(span: Span, source: &str) -> Span {
+     strip_delimiters(span, source, b'{', b'}')
+diff --git a/rust/crates/tikz-core/src/render.rs b/rust/crates/tikz-core/src/render.rs
+new file mode 100644
+index 00000000..04d6d365
+--- /dev/null
++++ b/rust/crates/tikz-core/src/render.rs
+@@ -0,0 +1,257 @@
++//! Source -> scene -> SVG facade for the supported TikZ slice.
++//!
++//! This is the Rust counterpart of `render/index.ts`, collapsed to one pure
++//! synchronous entry point. It currently understands exactly one statement
++//! shape: `\draw` with no options, drawing a `--` chain of Cartesian
++//! coordinates. **Everything else is reported as a [`Diagnostic`]; nothing is
++//! silently dropped**, so unsupported input can never produce a quietly wrong
++//! SVG.
++//!
++//! ```
++//! use tikz_core::render::render_tex;
++//! let svg = render_tex("\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}").unwrap();
++//! assert!(svg.starts_with("<svg "));
++//! assert!(svg.contains(r#"d="M 0 28.4528 L 28.4528 0""#));
++//! ```
++
++use crate::coordinate::{parse_coordinate, CoordinateForm};
++use crate::figure_scan::scan_tikz_figures;
++use crate::ids::path_statement_id;
++use crate::scene::{PathSeg, Scene, ScenePath};
++use crate::span::Span;
++use crate::svg_emit::emit_svg;
++use crate::units::{Vec2, CM_TO_PT, DEFAULT_LINE_WIDTH_PT, MM_TO_PT};
++
++/// Something the renderer could not honor, with its source location.
++#[derive(Debug, Clone, PartialEq)]
++pub struct Diagnostic {
++    /// Offending region of the source.
++    pub span: Span,
++    /// Human-readable reason.
++    pub message: String,
++}
++
++fn diag(from: usize, to: usize, message: impl Into<String>) -> Diagnostic {
++    Diagnostic { span: Span::new(from, to), message: message.into() }
++}
++
++/// Render the first (and only supported) figure of `source` to SVG.
++pub fn render_tex(source: &str) -> Result<String, Vec<Diagnostic>> {
++    compile(source).map(|scene| emit_svg(&scene))
++}
++
++/// Evaluate `source` into a [`Scene`].
++pub fn compile(source: &str) -> Result<Scene, Vec<Diagnostic>> {
++    let figures = scan_tikz_figures(source);
++    let figure = match figures.as_slice() {
++        [one] => one,
++        [] => return Err(vec![diag(0, source.len(), "no tikzpicture found")]),
++        [_, second, ..] => {
++            return Err(vec![diag(
++                second.span.from,
++                second.span.to,
++                "multi-figure documents are not supported yet",
++            )])
++        }
++    };
++    let (mut cursor, end) = (figure.begin_span.to, figure.end_span.from);
++    cursor = skip_trivia(source, cursor, end);
++    if source[cursor..end].starts_with('[') {
++        let close = matching(source, cursor, end, b'[', b']').ok_or_else(|| {
++            vec![diag(cursor, end, "unterminated figure options")]
++        })?;
++        if !source[cursor + 1..close].trim().is_empty() {
++            return Err(vec![diag(cursor, close + 1, "figure options are not supported yet")]);
++        }
++        cursor = close + 1;
++    }
++    let mut scene = Scene::default();
++    let mut errors = Vec::new();
++    for (index, (from, to, terminated)) in split_statements(source, cursor, end).into_iter().enumerate() {
++        if !terminated {
++            errors.push(diag(from, to, "statement is missing its terminating `;`"));
++            continue;
++        }
++        match compile_statement(source, from, to, index) {
++            Ok(Some(path)) => scene.paths.push(path),
++            Ok(None) => {}
++            Err(d) => errors.push(d),
++        }
++    }
++    if errors.is_empty() {
++        Ok(scene)
++    } else {
++        Err(errors)
++    }
++}
++
++/// Compile one `;`-terminated statement (`to` excludes the `;`).
++fn compile_statement(
++    src: &str,
++    from: usize,
++    to: usize,
++    index: usize,
++) -> Result<Option<ScenePath>, Diagnostic> {
++    let mut at = skip_trivia(src, from, to);
++    if at >= to {
++        return Ok(None); // only whitespace/comments before the `;`
++    }
++    let rest = &src[at..to];
++    let Some(after) = rest.strip_prefix("\\draw") else {
++        return Err(diag(at, to, "only \\draw statements are supported yet"));
++    };
++    if after.starts_with(|c: char| c.is_ascii_alphabetic()) {
++        return Err(diag(at, to, "unsupported control sequence"));
++    }
++    at += "\\draw".len();
++    at = skip_trivia(src, at, to);
++    if src[at..to].starts_with('[') {
++        let close = matching(src, at, to, b'[', b']')
++            .ok_or_else(|| diag(at, to, "unterminated option list"))?;
++        if !src[at + 1..close].trim().is_empty() {
++            return Err(diag(at, close + 1, "path options are not supported yet"));
++        }
++        at = skip_trivia(src, close + 1, to);
++    }
++    let mut segs: Vec<PathSeg> = Vec::new();
++    let mut expect_coordinate = true;
++    while at < to {
++        if src[at..to].starts_with('(') {
++            if !expect_coordinate {
++                return Err(diag(at, to, "expected `--` between coordinates"));
++            }
++            let close = matching(src, at, to, b'(', b')')
++                .ok_or_else(|| diag(at, to, "unterminated coordinate"))?;
++            let point = eval_coordinate(&src[at..=close]).map_err(|m| diag(at, close + 1, m))?;
++            segs.push(if segs.is_empty() { PathSeg::Move(point) } else { PathSeg::Line(point) });
++            at = close + 1;
++            expect_coordinate = false;
++        } else if src[at..to].starts_with("--") && !expect_coordinate {
++            at += 2;
++            expect_coordinate = true;
++        } else {
++            return Err(diag(at, to, "unsupported path operation"));
++        }
++        at = skip_trivia(src, at, to);
++    }
++    if expect_coordinate || segs.len() < 2 {
++        return Err(diag(from, to, "a path needs at least two coordinates joined by `--`"));
++    }
++    Ok(Some(ScenePath {
++        source_id: path_statement_id(index),
++        segs,
++        stroke_width: DEFAULT_LINE_WIDTH_PT,
++    }))
++}
++
++/// `(x,y)` with plain numbers (default unit cm) -> canvas pt.
++fn eval_coordinate(raw: &str) -> Result<Vec2, String> {
++    let parsed = parse_coordinate(raw);
++    if !parsed.is_well_formed || parsed.form != CoordinateForm::Cartesian {
++        return Err("only (x,y) coordinates are supported yet".to_string());
++    }
++    if parsed.options_raw.is_some() {
++        return Err("coordinate options are not supported yet".to_string());
++    }
++    Ok(Vec2::new(dimension_pt(&parsed.x)?, dimension_pt(&parsed.y)?))
++}
++
++/// Parse `1.5`, `2cm`, `3pt`, `4mm`, `1in`, `1bp` into pt.
++///
++/// ```
++/// use tikz_core::render::dimension_pt;
++/// assert_eq!(dimension_pt("2pt"), Ok(2.0));
++/// assert!(dimension_pt("1em").is_err());
++/// ```
++pub fn dimension_pt(raw: &str) -> Result<f64, String> {
++    let text = raw.trim();
++    let split = text.find(|c: char| c.is_ascii_alphabetic()).unwrap_or(text.len());
++    let (number, unit) = text.split_at(split);
++    let value: f64 = number.trim().parse().map_err(|_| format!("not a number: `{text}`"))?;
++    let factor = match unit.trim() {
++        "" | "cm" => CM_TO_PT,
++        "pt" => 1.0,
++        "mm" => MM_TO_PT,
++        "in" => 72.27,
++        "bp" => 72.27 / 72.0,
++        other => return Err(format!("unsupported unit `{other}`")),
++    };
++    Ok(value * factor)
++}
++
++/// Skip whitespace and `%` comments (to end of line) within `[at, end)`.
++fn skip_trivia(src: &str, mut at: usize, end: usize) -> usize {
++    let bytes = src.as_bytes();
++    while at < end {
++        match bytes[at] {
++            b if b.is_ascii_whitespace() => at += 1,
++            b'%' => {
++                while at < end && bytes[at] != b'\n' {
++                    at += 1;
++                }
++            }
++            _ => break,
++        }
++    }
++    at
++}
++
++/// Index of the delimiter closing the one at `open` (comments are inert).
++fn matching(src: &str, open: usize, end: usize, lo: u8, hi: u8) -> Option<usize> {
++    let bytes = src.as_bytes();
++    let mut depth = 0usize;
++    let mut at = open;
++    while at < end {
++        match bytes[at] {
++            b'%' => {
++                while at < end && bytes[at] != b'\n' {
++                    at += 1;
++                }
++                continue;
++            }
++            b if b == lo => depth += 1,
++            b if b == hi => {
++                depth -= 1;
++                if depth == 0 {
++                    return Some(at);
++                }
++            }
++            _ => {}
++        }
++        at += 1;
++    }
++    None
++}
++
++/// Split `[from, end)` at top-level `;` into `(from, to, terminated)`. The
++/// final unterminated chunk is returned too (`terminated == false`), so a
++/// missing `;` or trailing junk is diagnosed rather than ignored.
++fn split_statements(src: &str, from: usize, end: usize) -> Vec<(usize, usize, bool)> {
++    let bytes = src.as_bytes();
++    let (mut out, mut start, mut depth, mut at) = (Vec::new(), from, 0i32, from);
++    while at < end {
++        match bytes[at] {
++            b'%' => {
++                while at < end && bytes[at] != b'\n' {
++                    at += 1;
++                }
++                continue;
++            }
++            b'{' | b'[' | b'(' => depth += 1,
++            b'}' | b']' | b')' => depth -= 1,
++            b';' if depth <= 0 => {
++                out.push((start, at, true));
++                start = at + 1;
++            }
++            _ => {}
++        }
++        at += 1;
++    }
++    if skip_trivia(src, start, end) < end {
++        out.push((start, end, false));
++    }
++    out
++}
++
++#[cfg(test)]
++mod tests;
+diff --git a/rust/crates/tikz-core/src/render/tests.rs b/rust/crates/tikz-core/src/render/tests.rs
+new file mode 100644
+index 00000000..4d451768
+--- /dev/null
++++ b/rust/crates/tikz-core/src/render/tests.rs
+@@ -0,0 +1,101 @@
++//! Tests for the render facade: golden parity, diagnostics, fuzz safety.
++
++use super::*;
++use proptest::prelude::*;
++
++/// Committed legacy golden (`migration/goldens/<name>.{tex,svg}`).
++fn golden(name: &str, ext: &str) -> String {
++    let path = format!("{}/../../../migration/goldens/{name}.{ext}", env!("CARGO_MANIFEST_DIR"));
++    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
++}
++
++fn fig(body: &str) -> String {
++    format!("\\begin{{tikzpicture}}{body}\\end{{tikzpicture}}")
++}
++
++#[test]
++fn minimal_golden_is_byte_identical() {
++    let svg = render_tex(&golden("minimal", "tex")).expect("minimal renders");
++    assert_eq!(svg, golden("minimal", "svg").trim_end_matches('\n'));
++}
++
++#[test]
++fn comments_between_statements_are_inert() {
++    let src = fig("\n % \\draw (9,9) -- (8,8);\n \\draw (0,0) -- (1,1); % tail ; here\n");
++    let scene = compile(&src).unwrap();
++    assert_eq!(scene.paths.len(), 1);
++    assert_eq!(scene.paths[0].source_id, "path:0");
++}
++
++#[test]
++fn empty_figure_uses_fallback_viewbox() {
++    let svg = render_tex(&fig("")).unwrap();
++    assert!(svg.contains(r#"viewBox="-12 -12 124 124""#));
++}
++
++#[test]
++fn units_and_polylines_evaluate() {
++    let scene = compile(&fig("\\draw (0,0) -- (10pt,2mm) -- (1in,0);")).unwrap();
++    let pts: Vec<_> = scene.paths[0].segs.iter().map(|s| s.point()).collect();
++    assert_eq!(pts.len(), 3);
++    assert_eq!(pts[1], Vec2::new(10.0, 2.0 * MM_TO_PT));
++    assert_eq!(pts[2].x, 72.27);
++}
++
++#[test]
++fn unsupported_input_is_diagnosed_never_dropped() {
++    for (body, needle) in [
++        ("\\draw[thick] (0,0) -- (1,1);", "path options"),
++        ("\\node at (0,0) {A};", "only \\draw"),
++        ("\\draw (0,0) -- (1,1) node {A};", "unsupported path operation"),
++        ("\\draw (0,0) -- (1,1) -- cycle;", "unsupported path operation"),
++        ("\\draw (30:2) -- (1,1);", "only (x,y)"),
++        ("\\draw (0,0);", "at least two"),
++        ("\\draw (0,0) -- (1em,1);", "unsupported unit"),
++        ("\\draw (0,0) -- (1,1)", "missing its terminating"),
++    ] {
++        let err = compile(&fig(body)).expect_err(body);
++        assert!(err.iter().any(|d| d.message.contains(needle)), "{body}: {err:?}");
++    }
++}
++
++#[test]
++fn figure_options_and_multiple_figures_are_diagnosed() {
++    assert!(compile(&fig("[scale=2]\\draw (0,0) -- (1,1);")).is_err());
++    assert!(compile(&fig("[]\\draw (0,0) -- (1,1);")).is_ok());
++    let two = format!("{}\n{}", fig("\\draw (0,0) -- (1,1);"), fig("\\draw (0,0) -- (2,2);"));
++    assert!(compile(&two).unwrap_err()[0].message.contains("multi-figure"));
++    assert!(compile("no figure here").is_err());
++}
++
++#[test]
++fn path_ids_count_every_statement_slot() {
++    let scene = compile(&fig("\\draw (0,0) -- (1,0);\\draw (0,1) -- (1,1);")).unwrap();
++    let ids: Vec<_> = scene.paths.iter().map(|p| p.source_id.as_str()).collect();
++    assert_eq!(ids, ["path:0", "path:1"]);
++}
++
++#[test]
++fn dimension_rejects_garbage() {
++    assert!(dimension_pt("").is_err());
++    assert!(dimension_pt("abc").is_err());
++    assert_eq!(dimension_pt(" .5 "), Ok(0.5 * CM_TO_PT));
++    assert!((dimension_pt("1bp").unwrap() - 72.27 / 72.0).abs() < 1e-12);
++}
++
++proptest! {
++    /// Arbitrary printable soup (plus multibyte) never panics.
++    #[test]
++    fn token_soup_never_panics(body in "[ -~\n\u{e9}\u{4e2d}]{0,80}") {
++        let _ = render_tex(&fig(&body));
++    }
++
++    /// Any well-formed integer polyline renders to exactly one path.
++    #[test]
++    fn integer_polylines_render(pts in prop::collection::vec((-50i32..50, -50i32..50), 2..8)) {
++        let chain: Vec<String> = pts.iter().map(|(x, y)| format!("({x},{y})")).collect();
++        let svg = render_tex(&fig(&format!("\\draw {};", chain.join(" -- ")))).unwrap();
++        prop_assert_eq!(svg.matches("<path ").count(), 1);
++        prop_assert!(svg.ends_with("</svg>"));
++    }
++}
+diff --git a/rust/crates/tikz-core/src/scene.rs b/rust/crates/tikz-core/src/scene.rs
+new file mode 100644
+index 00000000..337ffe2a
+--- /dev/null
++++ b/rust/crates/tikz-core/src/scene.rs
+@@ -0,0 +1,69 @@
++//! Evaluated scene: resolved geometry ready for SVG emission or hit-testing.
++//!
++//! The legacy pipeline evaluates the AST into a scene graph before the SVG
++//! backend runs. This first slice only needs stroked polylines in TikZ
++//! canvas space (pt, y up); the emitter owns the y-flip.
++
++use crate::units::Vec2;
++
++/// One path command in canvas space.
++#[derive(Debug, Clone, Copy, PartialEq)]
++pub enum PathSeg {
++    /// `M x y`
++    Move(Vec2),
++    /// `L x y`
++    Line(Vec2),
++}
++
++impl PathSeg {
++    /// Endpoint of the segment.
++    pub fn point(self) -> Vec2 {
++        match self {
++            PathSeg::Move(p) | PathSeg::Line(p) => p,
++        }
++    }
++}
++
++/// A stroked, unfilled path.
++#[derive(Debug, Clone, PartialEq)]
++pub struct ScenePath {
++    /// Identity hook, e.g. `path:0` (`data-source-id` in the SVG).
++    pub source_id: String,
++    /// Segments in drawing order.
++    pub segs: Vec<PathSeg>,
++    /// Stroke width in pt.
++    pub stroke_width: f64,
++}
++
++/// Everything one figure draws.
++#[derive(Debug, Clone, Default, PartialEq)]
++pub struct Scene {
++    /// Paths in document order.
++    pub paths: Vec<ScenePath>,
++}
++
++impl Scene {
++    /// Axis-aligned bounds `(min, max)` of every path point, if any.
++    ///
++    /// ```
++    /// use tikz_core::scene::{PathSeg, Scene, ScenePath};
++    /// use tikz_core::units::Vec2;
++    /// let scene = Scene { paths: vec![ScenePath {
++    ///     source_id: "path:0".into(),
++    ///     segs: vec![PathSeg::Move(Vec2::new(1.0, 2.0)), PathSeg::Line(Vec2::new(3.0, -1.0))],
++    ///     stroke_width: 0.4,
++    /// }] };
++    /// assert_eq!(scene.bounds(), Some((Vec2::new(1.0, -1.0), Vec2::new(3.0, 2.0))));
++    /// assert_eq!(Scene::default().bounds(), None);
++    /// ```
++    pub fn bounds(&self) -> Option<(Vec2, Vec2)> {
++        let mut points = self.paths.iter().flat_map(|p| p.segs.iter().map(|s| s.point()));
++        let first = points.next()?;
++        Some(points.fold((first, first), |(lo, hi), p| {
++            (
++                Vec2::new(lo.x.min(p.x), lo.y.min(p.y)),
++                Vec2::new(hi.x.max(p.x), hi.y.max(p.y)),
++            )
++        }))
++    }
++}
+diff --git a/rust/crates/tikz-core/src/stmt_macro.rs b/rust/crates/tikz-core/src/stmt_macro.rs
+index b8a3311a..70975bd2 100644
+--- a/rust/crates/tikz-core/src/stmt_macro.rs
++++ b/rust/crates/tikz-core/src/stmt_macro.rs
+@@ -252,7 +252,6 @@ fn declare_operator_body(inner: &str, starred: bool) -> String {
+         "{}{{{inner}}}",
+         if starred { "\\operatorname*" } else { "\\operatorname" }
+     )
+-    .into()
+ }
+ 
+ /// Scan `\name` inside the bare inner text of a macro-name group.
+@@ -459,7 +458,7 @@ mod stmt_macro_unit_tests {
+         assert_eq!(stmt.optional_default_span, Some(Span::new(21, 22)));
+         assert_eq!(stmt.body_raw, "y");
+         assert_eq!(stmt.body_span, Some(Span::new(24, 25)));
+-        assert_eq!(stmt.starred, false);
++        assert!(!stmt.starred);
+     }
+ 
+     #[test]
+@@ -519,7 +518,7 @@ mod stmt_macro_unit_tests {
+         );
+         assert_eq!(stmt.name_raw, "\\bar");
+         assert_eq!(stmt.name_span, Some(Span::new(12, 16)));
+-        assert_eq!(stmt.starred, true);
++        assert!(stmt.starred);
+         assert_eq!(stmt.body_raw, "y");
+         assert_eq!(stmt.body_span, Some(Span::new(17, 18)));
+     }
+@@ -540,7 +539,7 @@ mod stmt_macro_unit_tests {
+         );
+         // The star sits between the command token and the name node.
+         assert_eq!(stmt.command_raw, "\\DeclareMathOperator");
+-        assert_eq!(stmt.starred, true);
++        assert!(stmt.starred);
+         assert_eq!(stmt.name_raw, "\\foo");
+         assert_eq!(stmt.name_span, Some(Span::new(22, 26)));
+         assert_eq!(stmt.body_raw, "\\operatorname*{x y}");
+@@ -561,7 +560,7 @@ mod stmt_macro_unit_tests {
+             },
+             "macro-command-definition:5".to_string(),
+         );
+-        assert_eq!(stmt.starred, false);
++        assert!(!stmt.starred);
+         assert_eq!(stmt.body_raw, "\\operatorname{x}");
+         assert_eq!(stmt.body_span, Some(Span::new(27, 28)));
+     }
+@@ -585,7 +584,7 @@ mod stmt_macro_unit_tests {
+             "macro-command-definition:6".to_string(),
+         );
+         assert_eq!(stmt.command_raw, "\\DeclareMathOperator");
+-        assert_eq!(stmt.starred, true);
++        assert!(stmt.starred);
+         assert_eq!(stmt.name_raw, "\\foo");
+         assert_eq!(stmt.name_span, Some(Span::new(13, 17)));
+         assert_eq!(stmt.body_raw, "\\operatorname*{y}");
+@@ -608,7 +607,7 @@ mod stmt_macro_unit_tests {
+             },
+             "macro-command-definition:7".to_string(),
+         );
+-        assert_eq!(stmt.starred, true);
++        assert!(stmt.starred);
+         assert_eq!(stmt.name_raw, "\\foo");
+         assert_eq!(stmt.name_span, Some(Span::new(22, 26)));
+         assert_eq!(stmt.body_raw, "\\operatorname*{\\foo}");
+diff --git a/rust/crates/tikz-core/src/svg_emit.rs b/rust/crates/tikz-core/src/svg_emit.rs
+new file mode 100644
+index 00000000..e4a541f9
+--- /dev/null
++++ b/rust/crates/tikz-core/src/svg_emit.rs
+@@ -0,0 +1,135 @@
++//! SVG backend: [`Scene`] -> SVG 1.1 string.
++//!
++//! Port of the path/viewBox portion of `packages/core/src/svg/emit.ts` and
++//! `svg/viewbox.ts`. Conventions (all verified against the committed
++//! goldens):
++//!
++//! * viewBox padding is 12pt plus half the widest stroke on every side; an
++//!   empty scene falls back to `-12 -12 124 124`;
++//! * the y-flip is `svg_y = 2*vb.y + vb.height - y`;
++//! * stroke attributes appear in a fixed order, one function emits them.
++
++use crate::scene::{PathSeg, Scene, ScenePath};
++use crate::svg_numbers::fmt_num;
++
++/// Padding added around the drawing on each side, in pt.
++const VIEWBOX_PAD: f64 = 12.0;
++
++/// ViewBox in canvas units.
++#[derive(Debug, Clone, Copy, PartialEq)]
++struct ViewBox {
++    x: f64,
++    y: f64,
++    width: f64,
++    height: f64,
++}
++
++impl ViewBox {
++    fn of(scene: &Scene) -> ViewBox {
++        let Some((lo, hi)) = scene.bounds() else {
++            return ViewBox { x: -12.0, y: -12.0, width: 124.0, height: 124.0 };
++        };
++        let half = scene.paths.iter().map(|p| p.stroke_width / 2.0).fold(0.0, f64::max);
++        let pad = VIEWBOX_PAD + half;
++        ViewBox {
++            x: lo.x - pad,
++            y: lo.y - pad,
++            width: (hi.x - lo.x) + 2.0 * pad,
++            height: (hi.y - lo.y) + 2.0 * pad,
++        }
++    }
++
++    /// Constant of the y-flip: `svg_y = flip_k - y`.
++    fn flip_k(&self) -> f64 {
++        2.0 * self.y + self.height
++    }
++}
++
++/// Emit the SVG document for `scene`.
++///
++/// ```
++/// use tikz_core::scene::Scene;
++/// use tikz_core::svg_emit::emit_svg;
++/// assert!(emit_svg(&Scene::default()).contains(r#"viewBox="-12 -12 124 124""#));
++/// ```
++pub fn emit_svg(scene: &Scene) -> String {
++    let vb = ViewBox::of(scene);
++    let mut out = format!(
++        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="{} {} {} {}" role="img" aria-label="TikZ SVG preview">"#,
++        fmt_num(vb.x),
++        fmt_num(vb.y),
++        fmt_num(vb.width),
++        fmt_num(vb.height)
++    );
++    for path in &scene.paths {
++        out.push_str(&emit_path(path, vb.flip_k()));
++    }
++    out.push_str("</svg>");
++    out
++}
++
++fn emit_path(path: &ScenePath, flip_k: f64) -> String {
++    let mut d = String::new();
++    for seg in &path.segs {
++        if !d.is_empty() {
++            d.push(' ');
++        }
++        let (cmd, p) = match seg {
++            PathSeg::Move(p) => ('M', p),
++            PathSeg::Line(p) => ('L', p),
++        };
++        d.push_str(&format!("{cmd} {} {}", fmt_num(p.x), fmt_num(flip_k - p.y)));
++    }
++    format!(
++        r#"<path data-source-id="{}" d="{d}" {} />"#,
++        escape_attr(&path.source_id),
++        stroke_attrs(path.stroke_width)
++    )
++}
++
++/// Stroke attributes in the one legacy order (see blueprint row 24).
++fn stroke_attrs(width: f64) -> String {
++    format!(
++        r#"stroke="black" fill="none" stroke-width="{}" stroke-linecap="butt" stroke-linejoin="miter" stroke-opacity="1" fill-opacity="1""#,
++        fmt_num(width)
++    )
++}
++
++/// Attribute escaping: `& < >` plus the double quote (blueprint row 23).
++fn escape_attr(raw: &str) -> String {
++    raw.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::units::Vec2;
++
++    fn line(a: (f64, f64), b: (f64, f64)) -> Scene {
++        Scene {
++            paths: vec![ScenePath {
++                source_id: "path:0".into(),
++                segs: vec![PathSeg::Move(Vec2::new(a.0, a.1)), PathSeg::Line(Vec2::new(b.0, b.1))],
++                stroke_width: 0.4,
++            }],
++        }
++    }
++
++    #[test]
++    fn viewbox_adds_pad_and_half_stroke() {
++        let vb = ViewBox::of(&line((0.0, 0.0), (10.0, 20.0)));
++        assert_eq!((vb.x, vb.y), (-12.2, -12.2));
++        assert!((vb.width - 34.4).abs() < 1e-12 && (vb.height - 44.4).abs() < 1e-12);
++    }
++
++    #[test]
++    fn y_flip_maps_bottom_to_top_edge() {
++        let svg = emit_svg(&line((0.0, 0.0), (10.0, 20.0)));
++        assert!(svg.contains(r#"d="M 0 20 L 10 0""#), "{svg}");
++    }
++
++    #[test]
++    fn attribute_escaping_covers_quote() {
++        assert_eq!(escape_attr(r#"a"b<&>"#), "a&quot;b&lt;&amp;&gt;");
++    }
++}
+diff --git a/rust/crates/tikz-core/src/svg_numbers.rs b/rust/crates/tikz-core/src/svg_numbers.rs
+new file mode 100644
+index 00000000..6f229acf
+--- /dev/null
++++ b/rust/crates/tikz-core/src/svg_numbers.rs
+@@ -0,0 +1,137 @@
++//! SVG number formatting, byte-compatible with the legacy emitter.
++//!
++//! Port of the number helper in `packages/core/src/svg/emit.ts`: a value is
++//! rendered with JavaScript's `toFixed(4)`, passed through
++//! `Number(..).toString()` so trailing zeros vanish, and collapses to `"0"`
++//! when it is non-finite or smaller than `1e-9` in magnitude.
++//!
++//! The one trap is the tie rule. ECMAScript `Number.prototype.toFixed`
++//! picks the *larger* `n` when two integers are equally close, while Rust's
++//! `{:.4}` rounds half to even. They only disagree on values that are an
++//! exact tie in binary (for example `0.03125`), so [`fmt_num`] detects an
++//! exact tie from the full decimal expansion and rounds it up itself.
++//!
++//! ```
++//! use tikz_core::svg_numbers::fmt_num;
++//! assert_eq!(fmt_num(28.4527559055), "28.4528");
++//! assert_eq!(fmt_num(0.4), "0.4");
++//! assert_eq!(fmt_num(-0.00001), "0");
++//! assert_eq!(fmt_num(0.03125), "0.0313"); // JS toFixed tie: larger n
++//! ```
++
++/// Format `value` exactly like the legacy `fmtNum` helper.
++///
++/// Magnitudes of `1e21` and above are out of contract (JS switches to
++/// exponent notation there); drawings never reach them.
++pub fn fmt_num(value: f64) -> String {
++    if !value.is_finite() || value.abs() < 1e-9 {
++        return "0".to_string();
++    }
++    let parsed: f64 = to_fixed4(value).parse().unwrap_or(0.0);
++    if parsed == 0.0 {
++        // Covers "-0.0000": `Number("-0.0000").toString()` is "0" in JS.
++        return "0".to_string();
++    }
++    format!("{parsed}")
++}
++
++/// `value.toFixed(4)` with the ECMAScript larger-`n` tie rule.
++///
++/// ```
++/// use tikz_core::svg_numbers::to_fixed4;
++/// assert_eq!(to_fixed4(2.5), "2.5000");
++/// assert_eq!(to_fixed4(-0.03125), "-0.0313");
++/// ```
++pub fn to_fixed4(value: f64) -> String {
++    let negative = value < 0.0;
++    let magnitude = value.abs();
++    // `{:.40}` prints the exact binary expansion, so a tie shows up as a
++    // lone `5` followed by zeros after the fourth decimal.
++    let wide = format!("{magnitude:.40}");
++    let dot = wide.find('.').unwrap_or(wide.len());
++    let tail = wide.get(dot + 5..).unwrap_or("");
++    let is_tie = tail.starts_with('5') && tail[1..].bytes().all(|b| b == b'0');
++    let body = if is_tie {
++        round_tie_up(&wide[..dot], &wide[dot + 1..dot + 5])
++    } else {
++        format!("{magnitude:.4}")
++    };
++    if negative {
++        format!("-{body}")
++    } else {
++        body
++    }
++}
++
++/// Add one unit in the fourth decimal place to `int_part.frac4`.
++fn round_tie_up(int_part: &str, frac4: &str) -> String {
++    let digits = format!("{int_part}{frac4}");
++    let bumped = digits.parse::<u128>().map_or(digits, |n| (n + 1).to_string());
++    let padded = format!("{bumped:0>5}");
++    let split = padded.len() - 4;
++    format!("{}.{}", &padded[..split], &padded[split..])
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use proptest::prelude::*;
++
++    #[test]
++    fn plain_values_trim_trailing_zeros() {
++        assert_eq!(fmt_num(0.0), "0");
++        assert_eq!(fmt_num(12.0), "12");
++        assert_eq!(fmt_num(-12.2), "-12.2");
++        assert_eq!(fmt_num(52.8527559055), "52.8528");
++    }
++
++    #[test]
++    fn non_finite_and_tiny_collapse_to_zero() {
++        assert_eq!(fmt_num(f64::NAN), "0");
++        assert_eq!(fmt_num(f64::INFINITY), "0");
++        assert_eq!(fmt_num(f64::NEG_INFINITY), "0");
++        assert_eq!(fmt_num(5e-10), "0");
++        assert_eq!(fmt_num(-0.0), "0");
++    }
++
++    #[test]
++    fn exact_ties_round_to_the_larger_integer() {
++        // 312.5 / 10^4: Rust `{:.4}` would give 0.0312 (half-even).
++        assert_eq!(to_fixed4(0.03125), "0.0313");
++        assert_eq!(to_fixed4(-0.03125), "-0.0313");
++        assert_eq!(to_fixed4(1.03125), "1.0313");
++        assert_eq!(to_fixed4(0.09375), "0.0938");
++        assert_eq!(to_fixed4(0.96875), "0.9688");
++    }
++
++    #[test]
++    fn near_ties_follow_the_exact_binary_value() {
++        // 0.00005 is stored slightly above the tie, 2.675 slightly below.
++        assert_eq!(to_fixed4(0.00005), "0.0001");
++        assert_eq!(to_fixed4(2.675), "2.6750");
++        assert_eq!(to_fixed4(1.00005), "1.0001");
++    }
++
++    #[test]
++    fn carries_propagate_through_a_tie() {
++        assert_eq!(to_fixed4(0.99996875), "1.0000");
++        assert_eq!(round_tie_up("9", "9999"), "10.0000");
++    }
++
++    proptest! {
++        #[test]
++        fn rounding_moves_values_by_at_most_half_a_unit(x in -1.0e6f64..1.0e6) {
++            let back: f64 = fmt_num(x).parse().unwrap();
++            prop_assert!((back - x).abs() <= 5.0e-5 + 1e-9);
++        }
++
++        #[test]
++        fn output_never_has_exponent_or_trailing_zero(x in -1.0e9f64..1.0e9) {
++            let s = fmt_num(x);
++            prop_assert!(!s.contains('e'));
++            if s.contains('.') {
++                prop_assert!(!s.ends_with('0'));
++            }
++        }
++    }
++}
+diff --git a/rust/crates/tikz-core/src/tex_lex.rs b/rust/crates/tikz-core/src/tex_lex.rs
+index 220395a1..d40dd627 100644
+--- a/rust/crates/tikz-core/src/tex_lex.rs
++++ b/rust/crates/tikz-core/src/tex_lex.rs
+@@ -36,7 +36,10 @@ pub fn read_tex_control_sequence(source: &str, from: usize) -> Option<TexControl
+         cursor += 1;
+     }
+     if cursor == from + 1 {
+-        cursor = bytes.len().min(from + 2);
++        // Control symbol: the backslash plus exactly one *character*. Using
++        // `from + 2` bytes would split a multibyte char and panic on slice.
++        let symbol_len = source[from + 1..].chars().next().map_or(0, char::len_utf8);
++        cursor = from + 1 + symbol_len;
+     }
+     Some(TexControlSequence {
+         raw: source[from..cursor].to_string(),
+@@ -277,3 +280,16 @@ mod tex_lex_unit_tests {
+         assert_eq!(span, Some(Span::new(0, source.len())));
+     }
+ }
++
++#[cfg(test)]
++mod multibyte_regression {
++    use super::*;
++
++    #[test]
++    fn control_symbol_before_multibyte_char_does_not_split_it() {
++        let seq = read_tex_control_sequence("\\\u{4e2d}x", 0).unwrap();
++        assert_eq!(seq.raw, "\\\u{4e2d}");
++        assert_eq!(seq.span, Span::new(0, 4));
++        assert_eq!(read_tex_control_sequence("\\", 0).unwrap().raw, "\\");
++    }
++}
+-- 
+2.43.0
+

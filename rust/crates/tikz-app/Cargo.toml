@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "egui-based TikZ editor: source view + canvas + selection/move/resize."
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "tikz-app"
 path = "src/main.rs"
@@ -13,3 +16,6 @@ path = "src/main.rs"
 tikz-core = { path = "../tikz-core" }
 eframe.workspace = true
 egui.workspace = true
+# Feature-only dependency: enables the wgpu backends eframe needs (see the
+# workspace manifest comment). Not used from code.
+wgpu.workspace = true

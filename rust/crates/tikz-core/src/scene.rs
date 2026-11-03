@@ -45,6 +45,27 @@ impl Paint {
     }
 }
 
+/// Arrow tip marker for the start or end of a path.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrowTip {
+    /// Arrow tip family/kind name (e.g. "latex", "stealth").
+    pub kind: String,
+    /// Arrow length in pt.
+    pub length: f64,
+    /// Arrow width in pt.
+    pub width: f64,
+}
+
+impl Default for ArrowTip {
+    fn default() -> Self {
+        Self {
+            kind: "latex".to_string(),
+            length: crate::units::DEFAULT_ARROW_LENGTH_PT,
+            width: crate::units::DEFAULT_ARROW_WIDTH_PT,
+        }
+    }
+}
+
 /// Paint state of one scene element.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathStyle {
@@ -64,6 +85,18 @@ pub struct PathStyle {
     pub dash: Option<Vec<f64>>,
     /// `stroke-dashoffset`; emitted only when `|offset| > 1e-6`.
     pub dash_offset: f64,
+    /// `stroke-linecap`.
+    pub line_cap: LineCap,
+    /// `stroke-linejoin`.
+    pub line_join: LineJoin,
+    /// Shorten start point by this many pt (arrow tip).
+    pub shorten_start: f64,
+    /// Shorten end point by this many pt (arrow tip).
+    pub shorten_end: f64,
+    /// Start arrow tip, `None` for none.
+    pub arrow_start: Option<ArrowTip>,
+    /// End arrow tip, `None` for none.
+    pub arrow_end: Option<ArrowTip>,
 }
 
 impl Default for PathStyle {
@@ -77,8 +110,32 @@ impl Default for PathStyle {
             even_odd: false,
             dash: None,
             dash_offset: 0.0,
+            line_cap: LineCap::Butt,
+            line_join: LineJoin::Miter,
+            shorten_start: 0.0,
+            shorten_end: 0.0,
+            arrow_start: None,
+            arrow_end: None,
         }
     }
+}
+
+/// `stroke-linecap` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LineCap {
+    #[default]
+    Butt,
+    Round,
+    Square,
+}
+
+/// `stroke-linejoin` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LineJoin {
+    #[default]
+    Miter,
+    Round,
+    Bevel,
 }
 
 impl PathStyle {

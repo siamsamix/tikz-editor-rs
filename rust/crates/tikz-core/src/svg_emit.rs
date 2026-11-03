@@ -15,8 +15,8 @@
 //!   an `<ellipse>` element (verified in `grid.svg`).
 
 use crate::scene::{
-    FontFamily, PathCmd, PathStyle, Scene, SceneElement, SceneEllipse, ScenePath, SceneText,
-    TextAlign,
+    FontFamily, LineCap, LineJoin, PathCmd, PathStyle, Scene, SceneElement, SceneEllipse,
+    ScenePath, SceneText, TextAlign,
 };
 use crate::svg_numbers::fmt_num;
 
@@ -139,6 +139,27 @@ pub fn emit_svg(scene: &Scene) -> String {
         fmt_num(vb.width),
         fmt_num(vb.height)
     );
+    // Collect all arrow tips used across paths, emit them as <marker> defs.
+    let mut arrow_defs = String::new();
+    let mut arrow_ids = std::collections::HashSet::new();
+    for element in &scene.elements {
+        if let SceneElement::Path(path) = element {
+            for arrow in path
+                .style
+                .arrow_start
+                .iter()
+                .chain(path.style.arrow_end.iter())
+            {
+                let id = format!("arrow-{}", arrow.kind);
+                if arrow_ids.insert(id.clone()) {
+                    arrow_defs.push_str(&emit_arrow_marker(arrow, &id));
+                }
+            }
+        }
+    }
+    if !arrow_defs.is_empty() {
+        out.push_str(&format!("<defs>{arrow_defs}</defs>"));
+    }
     for element in &scene.elements {
         match element {
             SceneElement::Path(path) => out.push_str(&emit_path(path, vb.flip_k())),
@@ -148,6 +169,18 @@ pub fn emit_svg(scene: &Scene) -> String {
     }
     out.push_str("</svg>");
     out
+}
+
+/// Emit an `<marker>` element for an arrow tip.
+fn emit_arrow_marker(arrow: &crate::scene::ArrowTip, id: &str) -> String {
+    let length = fmt_num(arrow.length);
+    let width = fmt_num(arrow.width);
+    let half_w = fmt_num(arrow.width / 2.0);
+    // Arrow marker: a filled triangle pointing right, tip at (length, width/2),
+    // base at (0, 0) and (0, width).
+    format!(
+        r#"<marker id="{id}" markerUnits="strokeWidth" markerWidth="{length}" markerHeight="{width}" refX="{length}" refY="{half_w}" orient="auto"><path d="M 0 0 L {length} {half_w} L 0 {width} Z" fill="currentColor" /></marker>"#,
+    )
 }
 
 fn emit_path(path: &ScenePath, flip_k: f64) -> String {
@@ -198,11 +231,23 @@ fn emit_path(path: &ScenePath, flip_k: f64) -> String {
             PathCmd::Close => d.push('Z'),
         }
     }
-    format!(
-        r#"<path data-source-id="{}" d="{d}" {} />"#,
+    let style_str = style_attrs(&path.style);
+    let result = format!(
+        r#"<path data-source-id="{}" d="{d}" {} {} {} />"#,
         escape_attr(&path.source_id),
-        style_attrs(&path.style)
-    )
+        style_str,
+        path.style
+            .arrow_start
+            .as_ref()
+            .map(|a| format!("marker-start=\"url(#arrow-{})\"", a.kind))
+            .unwrap_or_default(),
+        path.style
+            .arrow_end
+            .as_ref()
+            .map(|a| format!("marker-end=\"url(#arrow-{})\"", a.kind))
+            .unwrap_or_default(),
+    );
+    result
 }
 
 fn emit_ellipse(ellipse: &SceneEllipse, flip_k: f64) -> String {
@@ -292,12 +337,25 @@ fn style_attrs(style: &PathStyle) -> String {
     if style.even_odd {
         out.push_str(r#" fill-rule="evenodd""#);
     }
-    out.push_str(&format!(
-        r#" stroke-width="{}" stroke-linecap="butt" stroke-linejoin="miter" stroke-opacity="{}" fill-opacity="{}""#,
-        fmt_num(style.stroke_width),
-        fmt_num(style.stroke_opacity),
-        fmt_num(style.fill_opacity)
-    ));
+    out.push_str(" stroke-width=\"");
+    out.push_str(&fmt_num(style.stroke_width));
+    out.push_str("\" stroke-linecap=\"");
+    out.push_str(match style.line_cap {
+        LineCap::Butt => "butt",
+        LineCap::Round => "round",
+        LineCap::Square => "square",
+    });
+    out.push_str("\" stroke-linejoin=\"");
+    out.push_str(match style.line_join {
+        LineJoin::Miter => "miter",
+        LineJoin::Round => "round",
+        LineJoin::Bevel => "bevel",
+    });
+    out.push_str("\" stroke-opacity=\"");
+    out.push_str(&fmt_num(style.stroke_opacity));
+    out.push_str("\" fill-opacity=\"");
+    out.push_str(&fmt_num(style.fill_opacity));
+    out.push('"');
     if let Some(dash) = &style.dash {
         let values: Vec<String> = dash.iter().map(|value| fmt_num(*value)).collect();
         out.push_str(&format!(r#" stroke-dasharray="{}""#, values.join(" ")));

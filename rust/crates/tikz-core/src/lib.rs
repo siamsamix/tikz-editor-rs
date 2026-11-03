@@ -9,6 +9,7 @@
 pub mod adornment;
 pub mod ast;
 pub mod braces;
+pub mod capabilities;
 pub mod coordinate;
 pub mod figure_scan;
 pub mod foreach;

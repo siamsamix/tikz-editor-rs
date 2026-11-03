@@ -20,7 +20,7 @@ pub mod transform;
 
 use crate::ids::path_statement_id;
 use crate::options::parse_option_list_raw;
-use crate::parser::{convert_parsed_option_list, parse_tex};
+use crate::parser::{convert_parsed_option_list, parse_tex, StatementKind};
 use crate::scene::{Paint, Scene, SceneElement, SceneText};
 use crate::semantic::pathscan::NamedCoordinates;
 use crate::span::Span;
@@ -77,21 +77,21 @@ pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
             let index = next_statement_index;
             next_statement_index += 1;
 
-            match stmt.kind.as_str() {
-                "Path" => match stmt.command.as_deref() {
-                    Some("node") => {
-                        let (_command, after) = read_command(source, stmt.span.from, stmt.span.to);
-                        compile_node_statement(
-                            source,
-                            &figure_state,
-                            &mut named,
-                            index,
-                            after,
-                            stmt.span.to,
-                            &mut scene,
-                            &mut issues,
-                        );
-                    }
+            match &stmt.kind {
+                StatementKind::Node => {
+                    let (_command, after) = read_command(source, stmt.span.from, stmt.span.to);
+                    compile_node_statement(
+                        source,
+                        &figure_state,
+                        &mut named,
+                        index,
+                        after,
+                        stmt.span.to,
+                        &mut scene,
+                        &mut issues,
+                    );
+                }
+                StatementKind::Path => match stmt.command.as_deref() {
                     Some("coordinate") => {
                         let (_command, after) = read_command(source, stmt.span.from, stmt.span.to);
                         compile_coordinate_statement(
@@ -121,10 +121,39 @@ pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
                         ));
                     }
                 },
-                other => {
+                StatementKind::Unknown => {
+                    // Diagnostic already pushed during parsing (see parse_statement).
+                }
+                StatementKind::Coordinate => {
+                    let (_command, after) = read_command(source, stmt.span.from, stmt.span.to);
+                    compile_coordinate_statement(
+                        source,
+                        &figure_state,
+                        &mut named,
+                        index,
+                        after,
+                        stmt.span.to,
+                        &mut issues,
+                    );
+                }
+                StatementKind::Scope
+                | StatementKind::Foreach
+                | StatementKind::TikzStyle
+                | StatementKind::TikzSet
+                | StatementKind::TikzLibrary
+                | StatementKind::Pgfkeys
+                | StatementKind::PgfMath
+                | StatementKind::MacroDefinition
+                | StatementKind::MacroAlias
+                | StatementKind::MacroCommandDefinition
+                | StatementKind::Colorlet
+                | StatementKind::DefineColor => {
                     issues.push(Issue::warning(
                         stmt.span,
-                        format!("`\\{other}` statements are not supported yet"),
+                        format!(
+                            "`\\{}` statements are not supported yet",
+                            stmt.command.as_deref().unwrap_or(""),
+                        ),
                     ));
                 }
             }
@@ -194,7 +223,7 @@ fn compile_statement_from_ast(
         .map(|i| i.span)
         .unwrap_or_else(|| Span::new(0, 0));
     let stmt = crate::parser::ParsedStatement {
-        kind: "Path".to_string(),
+        kind: StatementKind::Path,
         id: path_statement_id(index),
         span,
         command: Some(command.to_string()),

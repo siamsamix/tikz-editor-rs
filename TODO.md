@@ -282,12 +282,16 @@ no AST-driven path evaluation. Fix that first.
   - Done when: semantic tests use AST fixtures, and behavior for existing slice-3
     is unchanged (parity 3/3 still).
 
-- [ ] **M1-4 · Full statement dispatch**
+- [x] **M1-4 · Full statement dispatch** — Done: 2026-11-03 (uncommitted)
   - Anchor: `ast/types.ts` 39 kinds; `transform/cst-to-ast.ts`; `domains/statements/parse.ts`.
   - Kinds: `Path`, `Scope`, `Foreach`, `Node`, `TikzStyle`, `TikzSet`, `TikzLibrary`,
     `Pgfkeys`, `PgfMath`, `MacroDefinition`, `MacroCommandDefinition`, `MacroAlias`,
     `Colorlet`, `DefineColor`, `Unknown`; node parts and `\nodepart`.
-  - Done when: every kind maps to a Rust enum variant with spans/options, and unknowns become
+  - Do: add `StatementKind` enum in `parser/mod.rs` with all variants; map every
+    command keyword to its variant; unknowns become `Unknown` + a diagnostic
+    (never silently dropped).
+  - Done when: every kind maps to a Rust enum variant with spans/options, unknowns
+    produce diagnostics, and behavior for slice-3 is unchanged (parity 3/3 still).
     `UnknownStatement` + diagnostic (never a dropped statement).
 
 - [ ] **M1-5 · UTF-8 / TeX text in source**

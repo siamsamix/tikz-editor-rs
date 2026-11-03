@@ -31,14 +31,23 @@ use crate::span::Span;
 use serde::Serialize;
 
 /// Commands whose bodies are path statements this slice parses into items.
-const PATH_COMMANDS: &[&str] = &[
-    "draw",
-    "path",
-    "fill",
-    "filldraw",
-    "shade",
-    "shadedraw",
-    "node",
+const PATH_COMMANDS: &[(&str, StatementKind)] = &[
+    ("draw", StatementKind::Path),
+    ("path", StatementKind::Path),
+    ("fill", StatementKind::Path),
+    ("filldraw", StatementKind::Path),
+    ("shade", StatementKind::Path),
+    ("shadedraw", StatementKind::Path),
+];
+
+/// Commands that map to non-path statement kinds.
+const NON_PATH_COMMANDS: &[(&str, StatementKind)] = &[
+    ("node", StatementKind::Node),
+    ("coordinate", StatementKind::Coordinate),
+    ("tikzstyle", StatementKind::TikzStyle),
+    ("tikzset", StatementKind::TikzSet),
+    ("colorlet", StatementKind::Colorlet),
+    ("definecolor", StatementKind::DefineColor),
 ];
 
 /// The parsed document: one figure per `tikzpicture`-like environment.
@@ -67,18 +76,83 @@ pub struct ParsedFigure {
     pub statements: Vec<ParsedStatement>,
 }
 
+/// Kind of a `;`-terminated statement.
+///
+/// Every TikZ statement head maps to one variant. Unknown commands become
+/// [`StatementKind::Unknown`] together with a diagnostic — nothing is ever
+/// silently dropped.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub enum StatementKind {
+    /// `\draw`, `\path`, `\fill`, `\filldraw`, `\shade`, `\shadedraw`.
+    Path,
+    /// `\begin{scope}` / `\end{scope}`.
+    Scope,
+    /// `\foreach … {…}`.
+    Foreach,
+    /// `\coordinate (name) at (x,y);`.
+    Coordinate,
+    /// `\node …`.
+    Node,
+    /// `\tikzstyle`.
+    TikzStyle,
+    /// `\tikzset`.
+    TikzSet,
+    /// `\usetikzlibrary`.
+    TikzLibrary,
+    /// `\pgfkeys`.
+    Pgfkeys,
+    /// `\pgfmath…` / `\pgfmathsetmacro` etc.
+    PgfMath,
+    /// `\def`.
+    MacroDefinition,
+    /// `\let`.
+    MacroAlias,
+    /// `\newcommand` / `\renewcommand` / `\providecommand` / `\DeclareRobustCommand` / `\DeclareMathOperator`.
+    MacroCommandDefinition,
+    /// `\colorlet`.
+    Colorlet,
+    /// `\definecolor`.
+    DefineColor,
+    /// Unrecognized statement head — never silently dropped.
+    Unknown,
+}
+
+impl StatementKind {
+    /// Returns the command keyword associated with this variant, if any.
+    pub fn command(&self) -> Option<&str> {
+        match self {
+            StatementKind::Path => None,
+            StatementKind::Scope => Some("begin"),
+            StatementKind::Foreach => Some("foreach"),
+            StatementKind::Coordinate => Some("coordinate"),
+            StatementKind::Node => Some("node"),
+            StatementKind::TikzStyle => Some("tikzstyle"),
+            StatementKind::TikzSet => Some("tikzset"),
+            StatementKind::TikzLibrary => Some("usetikzlibrary"),
+            StatementKind::Pgfkeys => Some("pgfkeys"),
+            StatementKind::PgfMath => Some("pgfmath"),
+            StatementKind::MacroDefinition => Some("def"),
+            StatementKind::MacroAlias => Some("let"),
+            StatementKind::MacroCommandDefinition => None,
+            StatementKind::Colorlet => Some("colorlet"),
+            StatementKind::DefineColor => Some("definecolor"),
+            StatementKind::Unknown => None,
+        }
+    }
+}
+
 /// One `;`-terminated statement.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ParsedStatement {
-    /// `Path` or `Unknown`.
-    pub kind: String,
-    /// Statement id (`path:N` or `unknown-statement:N`).
+    /// Typed statement kind.
+    pub kind: StatementKind,
+    /// Statement id (`path:N`, `unknown-statement:N`, …).
     pub id: String,
     /// Span covering the statement through its terminating `;`.
     pub span: Span,
-    /// The command keyword (lowercased) for path statements.
+    /// The raw command keyword (lowercased), when recognized.
     pub command: Option<String>,
-    /// Path items in order (empty for unknown statements).
+    /// Path items in order (empty for non-path statements).
     pub items: Vec<ParsedPathItem>,
 }
 
@@ -220,7 +294,14 @@ fn parse_figure(
             });
             continue;
         }
-        statements.push(parse_statement(source, statement_index, id, from, to));
+        statements.push(parse_statement(
+            source,
+            statement_index,
+            id,
+            from,
+            to,
+            diagnostics,
+        ));
     }
 
     ParsedFigure {
@@ -314,6 +395,7 @@ fn parse_statement(
     id: String,
     from: usize,
     to_inclusive: usize,
+    diagnostics: &mut Vec<ParsedDiagnostic>,
 ) -> ParsedStatement {
     let body_end = if to_inclusive > from && source.as_bytes()[to_inclusive - 1] == b';' {
         to_inclusive - 1
@@ -323,7 +405,7 @@ fn parse_statement(
     let at = skip_trivia(source, from, body_end);
     if at >= body_end {
         return ParsedStatement {
-            kind: "Path".to_string(),
+            kind: StatementKind::Unknown,
             id,
             span: Span::new(from, to_inclusive),
             command: None,
@@ -333,27 +415,66 @@ fn parse_statement(
 
     let (command, after) = read_command(source, at, body_end);
 
+    // Map the command to a typed statement kind. Unknown commands produce a
+    // diagnostic and `StatementKind::Unknown` — nothing is silently dropped.
+    let kind = match command {
+        // `\begin{scope}` / `\end{scope}`.
+        "begin" => {
+            let head = source[after..to_inclusive].trim_start();
+            if head.starts_with("{scope}") {
+                StatementKind::Scope
+            } else {
+                StatementKind::Unknown
+            }
+        }
+        // `\foreach … {…}`.
+        "foreach" => StatementKind::Foreach,
+        // Path commands.
+        _ => {
+            let mut found = None;
+            for (cmd, kind) in PATH_COMMANDS {
+                if command == *cmd {
+                    found = Some(*kind);
+                    break;
+                }
+            }
+            if let Some(kind) = found {
+                kind
+            } else {
+                // Non-path commands that are recognized by name.
+                for (cmd, kind) in NON_PATH_COMMANDS {
+                    if command == *cmd {
+                        found = Some(*kind);
+                        break;
+                    }
+                }
+                found.unwrap_or(StatementKind::Unknown)
+            }
+        }
+    };
+
+    // Unknown statement heads produce a diagnostic and are never silently dropped.
+    if kind == StatementKind::Unknown {
+        diagnostics.push(ParsedDiagnostic {
+            severity: "warning".to_string(),
+            span: Span::new(at, to_inclusive),
+            message: format!("`\\{command}` statements are not supported yet"),
+        });
+        return ParsedStatement {
+            kind,
+            id,
+            span: Span::new(from, to_inclusive),
+            command: Some(command.to_string()),
+            items: Vec::new(),
+        };
+    }
+
     // Scope statement: `\begin{scope}[…] … \end{scope}`. `split_statements`
     // already terminates the span at the matching `\end{scope}`, so emit it
     // with no items (scope bodies are evaluated separately, Phase 2).
-    if command == "begin" {
-        let head = source[after..to_inclusive].trim_start();
-        if head.starts_with("{scope}") {
-            return ParsedStatement {
-                kind: "Scope".to_string(),
-                id,
-                span: Span::new(from, to_inclusive),
-                command: None,
-                items: Vec::new(),
-            };
-        }
-    }
-
-    // `\foreach … {…}` statement: spans to the statement terminator already
-    // captured by `split_statements`; body parsing is deferred to Phase 2.
-    if command == "foreach" {
+    if kind == StatementKind::Scope {
         return ParsedStatement {
-            kind: "Foreach".to_string(),
+            kind,
             id,
             span: Span::new(from, to_inclusive),
             command: None,
@@ -361,11 +482,28 @@ fn parse_statement(
         };
     }
 
-    let is_path = PATH_COMMANDS.contains(&command);
+    // `\foreach … {…}` statement: spans to the statement terminator already
+    // captured by `split_statements`; body parsing is deferred to Phase 2.
+    if kind == StatementKind::Foreach {
+        return ParsedStatement {
+            kind,
+            id,
+            span: Span::new(from, to_inclusive),
+            command: None,
+            items: Vec::new(),
+        };
+    }
+
+    // Path statements: `\draw`, `\path`, `\fill`, `\filldraw`, `\shade`,
+    // `\shadedraw`. Node statements also reach here from PATH_COMMANDS? No —
+    // `node` is in NON_PATH_COMMANDS now, so only pure path commands reach here.
+    let is_path = matches!(kind, StatementKind::Path);
 
     if !is_path {
+        // Non-path commands (node, tikzstyle, tikzset, colorlet, definecolor)
+        // produce a statement with no items; Phase 2 evaluates them.
         return ParsedStatement {
-            kind: "Path".to_string(),
+            kind,
             id,
             span: Span::new(from, to_inclusive),
             command: Some(command.to_string()),
@@ -378,12 +516,6 @@ fn parse_statement(
     // while scanning items, so no separate options binding survives here.
     let mut items = Vec::new();
     let mut item_index = 0usize;
-    // For `\node` statements: the first `[options]` start anchors the Node item
-    // span, the leading named coordinate yields `name`, and the trailing
-    // `{text}` group becomes the Node item.
-    let mut options_start: Option<usize> = None;
-    let mut name: Option<String> = None;
-    let mut text_group: Option<Span> = None;
     while cursor < body_end {
         // Skip bytes that are not char boundaries (invalid UTF-8 from fuzz input).
         while cursor < body_end && !source.is_char_boundary(cursor) {
@@ -418,9 +550,6 @@ fn parse_statement(
         }
         if byte == b'[' {
             let close = matching(source, cursor, body_end, b'[', b']').unwrap_or(body_end);
-            if command == "node" && options_start.is_none() {
-                options_start = Some(cursor);
-            }
             let raw = &source[cursor..=close];
             let list = parse_option_list_raw(raw, cursor);
             items.push(path_item(
@@ -443,9 +572,6 @@ fn parse_statement(
             let raw = &source[cursor..=close];
             let inner = &source[cursor + 1..close];
             let (x, y, form) = parse_coordinate_text(inner);
-            if form == "named" && name.is_none() {
-                name = Some(x.clone());
-            }
             items.push(path_item(
                 statement_index,
                 &mut item_index,
@@ -459,17 +585,6 @@ fn parse_statement(
                 None,
             ));
             cursor = close + 1;
-            continue;
-        }
-        if byte == b'{' && command == "node" {
-            // The trailing `{text}` group becomes the Node item; record its
-            // span and stop scanning (nothing meaningful follows it).
-            if let Some(close) = matching(source, cursor, body_end, b'{', b'}') {
-                text_group = Some(Span::new(cursor, close + 1));
-                cursor = close + 1;
-            } else {
-                cursor += 1;
-            }
             continue;
         }
         // Path operators `--`, `|-`, `-|`, `..`.
@@ -567,36 +682,8 @@ fn parse_statement(
         cursor = keyword.1.to;
     }
 
-    // Emit the trailing `{text}` group as a Node item for `\node` statements.
-    if command == "node" {
-        if let Some(text_span) = text_group {
-            let node_from = options_start.unwrap_or(text_span.from);
-            let node_to = text_span.to;
-            let raw = &source[node_from..node_to];
-            let inner_from = text_span.from + 1;
-            let inner_to = text_span.to.saturating_sub(1);
-            let text = source[inner_from..inner_to].to_string();
-            let text_span = Span::new(inner_from, inner_to);
-            items.push(ParsedPathItem {
-                kind: "Node".to_string(),
-                id: format!("node:{statement_index}:{item_index}"),
-                span: Span::new(node_from, node_to),
-                raw: raw.to_string(),
-                x: None,
-                y: None,
-                form: None,
-                keyword: None,
-                options: None,
-                text: Some(text),
-                text_span: Some(text_span),
-                name,
-                template_raw: Some(raw.to_string()),
-            });
-        }
-    }
-
     ParsedStatement {
-        kind: "Path".to_string(),
+        kind,
         id,
         span: Span::new(from, to_inclusive),
         command: Some(command.to_string()),
@@ -911,7 +998,7 @@ mod tests {
         assert_eq!(fig.environment, "tikzpicture");
         assert_eq!(fig.statements.len(), 1);
         let stmt = &fig.statements[0];
-        assert_eq!(stmt.kind, "Path");
+        assert!(matches!(stmt.kind, StatementKind::Path));
         assert_eq!(stmt.command, Some("draw".to_string()));
         assert_eq!(stmt.items.len(), 3);
         assert_eq!(stmt.items[0].kind, "Coordinate");
@@ -925,21 +1012,43 @@ mod tests {
     }
 
     #[test]
-    fn unknown_statement_head_is_not_dropped() {
+    fn node_statement_is_node_kind() {
         let doc = parse_tex(
             "\\begin{tikzpicture}\\node at (0,0) {A};\\draw (0,0) -- (1,1);\\end{tikzpicture}",
         );
         assert_eq!(doc.figures[0].statements.len(), 2);
-        assert_eq!(doc.figures[0].statements[0].kind, "Path");
+        assert!(matches!(
+            doc.figures[0].statements[0].kind,
+            StatementKind::Node
+        ));
         assert_eq!(
             doc.figures[0].statements[0].command,
             Some("node".to_string())
         );
-        assert_eq!(doc.figures[0].statements[1].kind, "Path");
+        assert!(matches!(
+            doc.figures[0].statements[1].kind,
+            StatementKind::Path
+        ));
         assert_eq!(
             doc.figures[0].statements[1].command,
             Some("draw".to_string())
         );
+    }
+
+    #[test]
+    fn unknown_statement_produces_diagnostic() {
+        let doc = parse_tex("\\begin{tikzpicture}\\unknowncmd at (0,0);\\end{tikzpicture}");
+        assert_eq!(doc.figures[0].statements.len(), 1);
+        assert!(matches!(
+            doc.figures[0].statements[0].kind,
+            StatementKind::Unknown
+        ));
+        assert_eq!(
+            doc.figures[0].statements[0].command,
+            Some("unknowncmd".to_string())
+        );
+        assert!(!doc.diagnostics.is_empty());
+        assert!(doc.diagnostics[0].message.contains("unknowncmd"));
     }
 
     #[test]

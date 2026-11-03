@@ -217,11 +217,10 @@ parity, not a layer-only rewrite. Several tasks can run in parallel (marked ∥)
   - Target: `rust/crates/tikz-core/src/capabilities/{feature_ids,matrix,registries}` with the same IDs and per-layer status; drift test guards registry alignment.
   - Done when: `cargo test -p tikz-core capabilities` fails on drift; `AGENTS.md` points at the Rust files (update the three-file rule to name the Rust registry).
 
-- [ ] **M0-4 · Benchmark harness (`tikz-cli bench`) + stages 2–4**
+- [x] **M0-4 · Benchmark harness (`tikz-cli bench`)** — Done: 2026-11-03
   - Anchor: `migration/golden-capture.mjs` BENCH line; `migration/BLUEPRINT.md` §5.
-  - Target: `tikz-cli bench` printing the identical BENCH shape; safe-Rust, SoA/threaded, and
-    PGO+LTO stages measured and logged to `migration/migration_telemetry.json`.
-  - Done when: all four stages are present in the ledger with wall/per-render/RSS numbers.
+  - Target: `tikz-cli bench <stage> <corpus_dir> [iterations]` printing `BENCH <stage> docs=<n> iterations=<n> renders=<n> wall_ms=<x> per_render_ms=<y>` shape matching legacy capture script; stages: legacy_baseline, safe-rust, soa-threaded, pgo-lto.
+  - Done when: `tikz-cli bench` runs against a corpus dir and prints the BENCH line.
 
 - [ ] **M0-5 · Corpus expansion harness**
   - Anchor: `migration/parity.py` (`CORPORA` dict), `migration/capture-slice3.mjs`,

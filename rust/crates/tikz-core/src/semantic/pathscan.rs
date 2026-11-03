@@ -265,9 +265,18 @@ pub fn skip_trivia(src: &str, mut at: usize, to: usize) -> usize {
 
 /// Read a bare word (`rectangle`, `cycle`, ...) starting at `at`.
 pub fn read_word(src: &str, at: usize, to: usize) -> (&str, usize) {
+    if !src.is_char_boundary(at) {
+        return ("", at);
+    }
     let bytes = src.as_bytes();
     let mut end = at;
-    while end < to && (bytes[end].is_ascii_alphabetic() || bytes[end] == b'_') {
+    while end < to {
+        if !src.is_char_boundary(end) {
+            break;
+        }
+        if !bytes[end].is_ascii_alphabetic() && bytes[end] != b'_' {
+            break;
+        }
         end += 1;
     }
     (&src[at..end], end)

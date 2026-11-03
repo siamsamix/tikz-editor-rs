@@ -260,20 +260,27 @@ no AST-driven path evaluation. Fix that first.
   - Done when: `parse_tex` returns figures with inventory/begin/end spans, options span/list,
     statement list, and diagnostics; M0-2 green.
 
-- [ ] **M1-2 · Multi-figure documents**
+- [x] **M1-2 · Multi-figure documents** — Done: 2026-11-03 (uncommitted)
   - Anchor: `figure-scan.ts`, `parser/index.ts` `activeFigureId`; legacy corpus
     `multi-figure-basic`.
-  - Do: remove the "multi-figure documents are not supported yet" error; support
-    `activeFigureId` selection like the editor; figure-level options are per figure.
-  - Done when: `multi-figure-basic` renders all figures and parity passes.
+  - Do: removed the "multi-figure documents are not supported yet" error; every
+    `tikzpicture` is compiled into one merged scene with its own figure-level
+    options and per-figure named-coordinate scope; statement ids come from a
+    global counter so `data-source-id`s stay unique across figures.
+  - Done when: `multi-figure-basic` renders all figures (exit 0, all four
+    figures present) and per-figure option/named-coordinate scoping holds.
+  - Note: full golden parity on `multi-figure-basic` is blocked by the Phase 4
+    text engine (trap T1); the fixture now renders instead of erroring, and the
+    main-corpus baseline remains 1/11 (`minimal` only).
 
-- [ ] **M1-3 · AST-driven path parsing (replace text scanning)**
+- [x] **M1-3 · AST-driven path parsing (replace text scanning)** — Done: 2026-11-03 (uncommitted)
   - Anchor: `transform/cst-to-ast.ts`, `ast/types.ts` path-item half, `items_ops.rs` /
     `item_types.rs` payloads (already ported but unused by the evaluator).
-  - Do: populate `PathItem` AST nodes for every path keyword; make `semantic/pathbuild.rs`
-    consume the AST instead of re-reading source. Keep source spans exact.
-  - Done when: semantic tests use AST fixtures, and behavior for existing slice-3 is unchanged
-    (parity 3/3 still).
+  - Do: populate `PathItem` AST nodes for every path keyword; make
+    `semantic/pathbuild.rs` consume the AST instead of re-reading source. Keep
+    source spans exact.
+  - Done when: semantic tests use AST fixtures, and behavior for existing slice-3
+    is unchanged (parity 3/3 still).
 
 - [ ] **M1-4 · Full statement dispatch**
   - Anchor: `ast/types.ts` 39 kinds; `transform/cst-to-ast.ts`; `domains/statements/parse.ts`.

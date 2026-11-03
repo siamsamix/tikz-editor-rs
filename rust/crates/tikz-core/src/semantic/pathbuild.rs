@@ -1,10 +1,10 @@
-//! Path statement evaluation: text scan -> [`SceneElement`]s.
+//! Path statement evaluation: AST items -> [`SceneElement`]s.
 //!
 //! The legacy evaluator walks AST path items and threads a builder with
 //! pending shape state (`pendingCircleCenter`, `pendingGrid`, ...). This port
-//! keeps that shape — a [`Builder`] plus a [`Pending`] slot — but scans the
-//! statement text directly, because the Rust front-end does not (yet) build
-//! path-item AST nodes for every keyword.
+//! keeps that shape — a [`Builder`] plus a [`Pending`] slot — but consumes the
+//! [`crate::items::PathItem`] AST produced by the front-end instead of
+//! re-scanning statement text. Source spans are preserved exactly.
 //!
 //! Supported: coordinates (Cartesian/polar, absolute/relative), `--`, `|-`,
 //! `-|`, `cycle`, `rectangle`, `circle`, `ellipse`, `arc`, `grid`, plus the
@@ -12,22 +12,21 @@
 //! `[start angle=...]`, `[end angle=...]`, `[step=...]`. Unsupported
 //! keywords produce issues; nothing is dropped silently.
 
-use crate::options::parse_option_list_raw;
+use crate::item_types::{CoordinateForm, CoordinateItem, RelativeCoordinatePrefix};
+use crate::items::PathItem;
 use crate::scene::{PathCmd, SceneElement, ScenePath};
 use crate::semantic::pathcurve::{resolve_to_curve, to_curve_controls, ToCurveOptions};
 use crate::semantic::pathscan::{
-    matching, parse_arc_shorthand, parse_coordinate, parse_length, parse_point, parse_radii,
-    read_word, skip_optional_groups, skip_trivia, ArcParams, NamedCoordinates,
+    parse_arc_shorthand, parse_coordinate, parse_length, parse_point, parse_radii, ArcParams,
+    NamedCoordinates,
 };
 use crate::semantic::shapes::{emit_arc, emit_circle, emit_ellipse, emit_grid, emit_rectangle};
 use crate::semantic::style::{Issue, StyleState};
 use crate::span::Span;
 use crate::units::Vec2;
 
-/// Everything the scanner needs beyond the text slice.
+/// Everything the evaluator needs beyond the item list.
 pub struct PathContext<'a> {
-    /// Whole source (spans are absolute offsets into it).
-    pub source: &'a str,
     /// `data-source-id` for the elements this statement produces.
     pub source_id: String,
     /// Style state; mid-path option lists update it in place.
@@ -111,376 +110,280 @@ pub(crate) enum Relative {
     PlusPlus,
 }
 
-/// Build the elements of one path statement; `from`/`to` bound the slice
-/// after the command name and the statement's leading option list.
+/// Build the elements of one path statement from its [`PathItem`] AST.
+///
+/// This replaces the legacy text scanner: every keyword/coordinate/option is
+/// consumed from [`crate::items::PathItem`] nodes produced by the front-end,
+/// keeping exact source spans and never re-reading statement text.
 pub fn build_path(
     ctx: &mut PathContext<'_>,
-    from: usize,
-    to: usize,
+    items: &[PathItem],
     issues: &mut Vec<Issue>,
 ) -> Vec<SceneElement> {
-    let src = ctx.source;
     let mut elements = Vec::new();
     let mut builder = Builder::default();
     let mut pending = Pending::None;
-    let mut at = from;
+    // Item indices consumed by a preceding `|-`/`-|`/`to`/`edge` keyword so the
+    // loop skips them as standalone coordinates.
+    let mut consumed: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
-    while at < to {
-        // TikZ structural syntax is ASCII-only; a byte index that is not a char
-        // boundary lies inside a multi-byte UTF-8 sequence (stray text). Skip it
-        // so that str slicing at `at` never panics on arbitrary fuzz input.
-        while at < to && !src.is_char_boundary(at) {
-            at += 1;
-        }
-        if at >= to {
-            break;
-        }
-        let byte = src.as_bytes()[at];
-        if byte == b'%' {
-            while at < to && src.as_bytes()[at] != b'\n' {
-                at += 1;
-            }
+    for (item_index, item) in items.iter().enumerate() {
+        if consumed.contains(&item_index) {
             continue;
         }
-        if byte.is_ascii_whitespace() {
-            at += 1;
-            continue;
-        }
-        if byte == b'[' {
-            let Some(close) = matching(src, at, to, b'[', b']') else {
-                issues.push(Issue::error(Span::new(at, to), "unterminated option list"));
-                break;
-            };
-            let list = parse_option_list_raw(&src[at..=close], at);
-            ctx.state.apply(&list, issues);
-            if matches!(pending, Pending::Circle | Pending::Ellipse | Pending::Arc) {
-                finish_pending_shape(
-                    &mut builder,
-                    ctx,
-                    pending,
-                    Span::new(at, close + 1),
-                    issues,
-                    &mut elements,
-                );
+        match item {
+            PathItem::Coordinate(coord) => {
+                let relative = match coord.relative_prefix {
+                    Some(RelativeCoordinatePrefix::PlusPlus) => Relative::PlusPlus,
+                    Some(RelativeCoordinatePrefix::Plus) => Relative::Plus,
+                    None => Relative::Absolute,
+                };
+                let inner = coordinate_inner(coord);
+                let span = coord.span;
+                match pending {
+                    Pending::Rectangle => match parse_point(&inner) {
+                        Ok(corner) => emit_rectangle(&mut builder, ctx, &mut elements, corner),
+                        Err(error) => issues.push(Issue::error(span, error)),
+                    },
+                    Pending::Circle => match parse_length(&coord.x) {
+                        Ok(radius) => {
+                            emit_circle(&mut builder, ctx, &mut elements, radius, span, issues)
+                        }
+                        Err(error) => issues.push(Issue::error(span, error)),
+                    },
+                    Pending::Ellipse => match parse_radii(&inner) {
+                        Ok((rx, ry)) => {
+                            emit_ellipse(&mut builder, ctx, &mut elements, rx, ry, span, issues)
+                        }
+                        Err(error) => issues.push(Issue::error(span, error)),
+                    },
+                    Pending::Arc => match parse_arc_shorthand(&inner) {
+                        Ok(params) => emit_arc(&mut builder, ctx, params, span, issues),
+                        Err(error) => issues.push(Issue::error(span, error)),
+                    },
+                    Pending::Grid => match parse_point(&inner) {
+                        Ok(corner) => emit_grid(&mut builder, ctx, &mut elements, Some(corner)),
+                        Err(error) => issues.push(Issue::error(span, error)),
+                    },
+                    Pending::None => match parse_coordinate(&inner, Some(ctx.named)) {
+                        Ok(parsed) => {
+                            let transform = ctx.state.transform;
+                            let local = match relative {
+                                Relative::Absolute => parsed,
+                                Relative::Plus | Relative::PlusPlus => {
+                                    builder.local_base.unwrap_or(Vec2::new(0.0, 0.0)) + parsed
+                                }
+                            };
+                            let point = transform.apply(local);
+                            if relative != Relative::Plus {
+                                builder.base = Some(point);
+                                builder.local_base = Some(local);
+                            }
+                            builder.local = Some(local);
+                            builder.advance(point);
+                        }
+                        Err(error) => issues.push(Issue::error(span, error)),
+                    },
+                }
                 pending = Pending::None;
             }
-            // `grid [step=...] (corner)` keeps the pending flag: the corner
-            // coordinate is what actually draws the lines.
-            at = close + 1;
-            continue;
-        }
-        if byte == b'(' {
-            let Some(close) = matching(src, at, to, b'(', b')') else {
-                issues.push(Issue::error(Span::new(at, to), "unterminated coordinate"));
-                break;
-            };
-            let inner = src[at + 1..close].to_string();
-            let span = Span::new(at, close + 1);
-            let relative = relative_kind(src, at);
-            match pending {
-                Pending::Rectangle => match parse_point(&inner) {
-                    Ok(corner) => emit_rectangle(&mut builder, ctx, &mut elements, corner),
-                    Err(error) => issues.push(Issue::error(span, error)),
-                },
-                Pending::Circle => match parse_length(&inner) {
-                    Ok(radius) => {
-                        emit_circle(&mut builder, ctx, &mut elements, radius, span, issues)
-                    }
-                    Err(error) => issues.push(Issue::error(span, error)),
-                },
-                Pending::Ellipse => match parse_radii(&inner) {
-                    Ok((rx, ry)) => {
-                        emit_ellipse(&mut builder, ctx, &mut elements, rx, ry, span, issues)
-                    }
-                    Err(error) => issues.push(Issue::error(span, error)),
-                },
-                Pending::Arc => match parse_arc_shorthand(&inner) {
-                    Ok(params) => emit_arc(&mut builder, ctx, params, span, issues),
-                    Err(error) => issues.push(Issue::error(span, error)),
-                },
-                Pending::Grid => match parse_point(&inner) {
-                    Ok(corner) => emit_grid(&mut builder, ctx, &mut elements, Some(corner)),
-                    Err(error) => issues.push(Issue::error(span, error)),
-                },
-                Pending::None => match parse_coordinate(&inner, Some(ctx.named)) {
-                    Ok(parsed) => {
-                        let transform = ctx.state.transform;
-                        let local = match relative {
-                            Relative::Absolute => parsed,
-                            Relative::Plus | Relative::PlusPlus => {
-                                builder.local_base.unwrap_or(Vec2::new(0.0, 0.0)) + parsed
-                            }
-                        };
-                        let point = transform.apply(local);
-                        if relative != Relative::Plus {
-                            builder.base = Some(point);
-                            builder.local_base = Some(local);
-                        }
-                        builder.local = Some(local);
-                        builder.advance(point);
-                    }
-                    Err(error) => issues.push(Issue::error(span, error)),
-                },
-            }
-            pending = Pending::None;
-            at = close + 1;
-            continue;
-        }
-        if src[at..to].starts_with("--") {
-            at += 2;
-            continue;
-        }
-        if src[at..to].starts_with("|-") || src[at..to].starts_with("-|") {
-            let vertical_first = src[at..to].starts_with("|-");
-            let mut open = skip_trivia(src, at + 2, to);
-            // Consume `+`/`++` relative prefixes before the coordinate.
-            let mut plus_plus = false;
-            while src.as_bytes().get(open) == Some(&b'+') {
-                open += 1;
-                if src.as_bytes().get(open) == Some(&b'+') {
-                    plus_plus = true;
-                    open += 1;
+            PathItem::PathOption(opt) => {
+                ctx.state.apply(&opt.options, issues);
+                if matches!(pending, Pending::Circle | Pending::Ellipse | Pending::Arc) {
+                    finish_pending_shape(
+                        &mut builder,
+                        ctx,
+                        pending,
+                        opt.span,
+                        issues,
+                        &mut elements,
+                    );
+                    pending = Pending::None;
                 }
-                open = skip_trivia(src, open, to);
+                // `grid [step=...] (corner)` keeps the pending flag: the corner
+                // coordinate is what actually draws the lines.
             }
-            if src.as_bytes().get(open) == Some(&b'(') {
-                if let Some(close) = matching(src, open, to, b'(', b')') {
-                    match parse_coordinate(&src[open + 1..close], Some(ctx.named)) {
-                        Ok(target) => {
-                            let transform = ctx.state.transform;
-                            let current = builder.current.unwrap_or(Vec2::new(0.0, 0.0));
-                            // `++` makes the target relative to the current point.
-                            let target = if plus_plus { current + target } else { target };
-                            let local_from = builder.local.unwrap_or(target);
+            PathItem::PathKeyword(keyword) => match keyword.keyword.as_str() {
+                "rectangle" => pending = Pending::Rectangle,
+                "circle" => pending = Pending::Circle,
+                "ellipse" => pending = Pending::Ellipse,
+                "arc" => pending = Pending::Arc,
+                "grid" => pending = Pending::Grid,
+                "cycle" => {
+                    if let (Some(current), Some(start)) = (builder.current, builder.start) {
+                        // Legacy closes by appending a line to the subpath start
+                        // and then the `Z` command.
+                        if current != start {
+                            builder.cmds.push(PathCmd::Line(start));
+                            builder.touch(start);
+                        }
+                        builder.cmds.push(PathCmd::Close);
+                    }
+                    if let Some(start) = builder.start {
+                        builder.current = Some(start);
+                        builder.base = Some(start);
+                    }
+                    flush(&mut builder, ctx, &mut elements);
+                }
+                "--" | ".." => {
+                    // Plain line connector: nothing to do — the next `Coordinate`
+                    // item appends a `Line` (or `Move` if the path is empty).
+                }
+                "and" => {}
+                "to" | "edge" | "-|" | "|-" => {
+                    // Perpendicular connectors (`-|`, `|-`) draw a corner point
+                    // then the target; `to`/`edge` draw a (possibly curved)
+                    // segment from the current point to it.
+                    // Mid-path `[...]` options appear as separate `PathOption`
+                    // items in the AST and are handled before this keyword.
+                    let is_perp = matches!(keyword.keyword.as_str(), "-|" | "|-");
+                    // Expect a `(target)` coordinate.
+                    if let Some(target_coord) = items[item_index + 1..].iter().find_map(|next| {
+                        if let PathItem::Coordinate(coord) = next {
+                            let inner = coordinate_inner(coord);
+                            parse_coordinate(&inner, None)
+                                .ok()
+                                .map(|point| (coord.span, point))
+                        } else {
+                            None
+                        }
+                    }) {
+                        consumed.insert(item_index + 1);
+                        let (_coord_span, target) = target_coord;
+                        if is_perp {
+                            let vertical_first = keyword.keyword == "|-";
+                            let current = builder.local.unwrap_or(target);
                             let local_corner = if vertical_first {
-                                Vec2::new(local_from.x, target.y)
+                                Vec2::new(current.x, target.y)
                             } else {
-                                Vec2::new(target.x, local_from.y)
+                                Vec2::new(target.x, current.y)
                             };
+                            let transform = ctx.state.transform;
                             builder.local = Some(local_corner);
                             builder.advance(transform.apply(local_corner));
                             builder.local = Some(target);
                             builder.advance(transform.apply(target));
                             builder.base = Some(transform.apply(target));
                             builder.local_base = Some(target);
-                        }
-                        Err(error) => issues.push(Issue::error(Span::new(open, close + 1), error)),
-                    }
-                    at = close + 1;
-                    continue;
-                }
-            }
-            issues.push(Issue::error(
-                Span::new(at, to),
-                "`|-`/`-|` needs a coordinate",
-            ));
-            break;
-        }
-        if src[at..to].starts_with("..") {
-            // `.. controls (c1) and (c2) .. (target)` cubic curve; plain `..` is treated
-            // as a line connector to the next coordinate.
-            at += 2;
-            at = skip_trivia(src, at, to);
-            let (word, after_word) = read_word(src, at, to);
-            if word == "controls" {
-                let open = skip_trivia(src, after_word, to);
-                let Some(c1_close) = matching(src, open, to, b'(', b')') else {
-                    issues.push(Issue::error(
-                        Span::new(open, to),
-                        "`controls` needs a coordinate",
-                    ));
-                    break;
-                };
-                let c1 = match parse_coordinate(&src[open + 1..c1_close], Some(ctx.named)) {
-                    Ok(p) => p,
-                    Err(error) => {
-                        issues.push(Issue::error(Span::new(open, c1_close + 1), error));
-                        break;
-                    }
-                };
-                // `and (c2)` is optional; when absent the second control equals the first.
-                let mut c2 = c1;
-                let mut at2 = skip_trivia(src, c1_close + 1, to);
-                if src[at2..to].starts_with("and") {
-                    at2 += 3;
-                    at2 = skip_trivia(src, at2, to);
-                    if let Some(c2_close) = matching(src, at2, to, b'(', b')') {
-                        c2 = match parse_coordinate(&src[at2 + 1..c2_close], Some(ctx.named)) {
-                            Ok(p) => p,
-                            Err(error) => {
-                                issues.push(Issue::error(Span::new(at2, c2_close + 1), error));
-                                break;
-                            }
-                        };
-                        at2 = c2_close + 1;
-                    }
-                }
-                // The closing `..` before the target coordinate.
-                at2 = skip_trivia(src, at2, to);
-                if src[at2..to].starts_with("..") {
-                    at2 += 2;
-                    at2 = skip_trivia(src, at2, to);
-                }
-                if let Some(t_close) = matching(src, at2, to, b'(', b')') {
-                    let target = match parse_coordinate(&src[at2 + 1..t_close], Some(ctx.named)) {
-                        Ok(p) => p,
-                        Err(error) => {
-                            issues.push(Issue::error(Span::new(at2, t_close + 1), error));
-                            break;
-                        }
-                    };
-                    builder.cmds.push(PathCmd::Cubic { c1, c2, to: target });
-                    builder.current = Some(target);
-                    builder.base = Some(target);
-                    builder.local = Some(target);
-                    builder.local_base = Some(target);
-                    builder.touch(target);
-                    at = t_close + 1;
-                    continue;
-                }
-            }
-            at = after_word;
-            continue;
-        }
-        if byte == b';' {
-            break;
-        }
-        if byte == b'+' {
-            // `+`/`++` prefixes belong to the next coordinate.
-            at += 1;
-            continue;
-        }
-
-        let (word, after) = read_word(src, at, to);
-        match word {
-            "rectangle" => pending = Pending::Rectangle,
-            "circle" => pending = Pending::Circle,
-            "ellipse" => pending = Pending::Ellipse,
-            "arc" => pending = Pending::Arc,
-            "grid" => pending = Pending::Grid,
-            "cycle" => {
-                if let (Some(current), Some(start)) = (builder.current, builder.start) {
-                    // Legacy closes by appending a line to the subpath start
-                    // and then the `Z` command.
-                    if current != start {
-                        builder.cmds.push(PathCmd::Line(start));
-                        builder.touch(start);
-                    }
-                    builder.cmds.push(PathCmd::Close);
-                }
-                if let Some(start) = builder.start {
-                    builder.current = Some(start);
-                    builder.base = Some(start);
-                }
-                flush(&mut builder, ctx, &mut elements);
-            }
-            "to" | "edge" => {
-                // Consume any following `[...]` option lists: they set the `to`-curve
-                // state (`bend`, `out`, `in`, `looseness`, ...) used below.
-                let mut cursor = after;
-                while cursor < to {
-                    cursor = skip_trivia(src, cursor, to);
-                    if !src[cursor..to].starts_with('[') {
-                        break;
-                    }
-                    let Some(close) = matching(src, cursor, to, b'[', b']') else {
-                        issues.push(Issue::error(
-                            Span::new(cursor, to),
-                            "unterminated option list",
-                        ));
-                        break;
-                    };
-                    let list = parse_option_list_raw(&src[cursor..=close], cursor);
-                    ctx.state.apply(&list, issues);
-                    cursor = close + 1;
-                }
-                // Expect a `(target)` coordinate and draw a (possibly curved) segment
-                // from the current point to it.
-                let cursor = skip_trivia(src, cursor, to);
-                if cursor < to && src.as_bytes().get(cursor) == Some(&b'(') {
-                    if let Some(close) = matching(src, cursor, to, b'(', b')') {
-                        let inner = &src[cursor + 1..close];
-                        if let Ok(target) = parse_coordinate(inner, Some(ctx.named)) {
-                            if let Some(current) = builder.current {
-                                let transform = ctx.state.transform;
-                                let local_delta = transform
-                                    .inverse_apply_vector(target - current)
-                                    .unwrap_or(target - current);
-                                let base_heading = local_delta.y.atan2(local_delta.x).to_degrees();
-                                let curve = resolve_to_curve(ToCurveOptions {
-                                    out: ctx.state.to_out,
-                                    in_angle: ctx.state.to_in,
-                                    looseness: ctx.state.to_looseness,
-                                    out_looseness: ctx.state.to_out_looseness,
-                                    in_looseness: ctx.state.to_in_looseness,
-                                    bend_signed: ctx.state.to_bend,
-                                    base_heading,
-                                    relative: ctx.state.to_relative,
-                                    has_explicit_in_or_out: ctx.state.to_out.is_some()
-                                        || ctx.state.to_in.is_some(),
-                                    has_bend_direction: ctx.state.to_bend.is_some(),
-                                    bend_direction: None,
-                                });
-                                if let Some((c1, c2, end)) =
-                                    to_curve_controls(current, target, &transform, &curve)
-                                {
-                                    builder.cmds.push(PathCmd::Cubic { c1, c2, to: end });
-                                    builder.current = Some(end);
-                                    builder.base = Some(end);
-                                    builder.local = Some(end);
-                                    builder.local_base = Some(end);
-                                    builder.touch(end);
-                                } else {
-                                    builder.advance(target);
-                                }
+                        } else if let Some(current) = builder.current {
+                            let transform = ctx.state.transform;
+                            let local_delta = transform
+                                .inverse_apply_vector(target - current)
+                                .unwrap_or(target - current);
+                            let base_heading = local_delta.y.atan2(local_delta.x).to_degrees();
+                            let curve = resolve_to_curve(ToCurveOptions {
+                                out: ctx.state.to_out,
+                                in_angle: ctx.state.to_in,
+                                looseness: ctx.state.to_looseness,
+                                out_looseness: ctx.state.to_out_looseness,
+                                in_looseness: ctx.state.to_in_looseness,
+                                bend_signed: ctx.state.to_bend,
+                                base_heading,
+                                relative: ctx.state.to_relative,
+                                has_explicit_in_or_out: ctx.state.to_out.is_some()
+                                    || ctx.state.to_in.is_some(),
+                                has_bend_direction: ctx.state.to_bend.is_some(),
+                                bend_direction: None,
+                            });
+                            if let Some((c1, c2, end)) =
+                                to_curve_controls(current, target, &transform, &curve)
+                            {
+                                builder.cmds.push(PathCmd::Cubic { c1, c2, to: end });
+                                builder.current = Some(end);
+                                builder.base = Some(end);
+                                builder.local = Some(end);
+                                builder.local_base = Some(end);
+                                builder.touch(end);
                             } else {
-                                // No current point: start a fresh subpath at the target.
                                 builder.advance(target);
                             }
-                            at = close + 1;
-                            continue;
+                        } else {
+                            // No current point: start a fresh subpath at the target.
+                            builder.advance(target);
                         }
+                    } else {
+                        issues.push(Issue::warning(
+                            keyword.span,
+                            format!("`{}` needs a coordinate target", keyword.keyword),
+                        ));
                     }
                 }
-                issues.push(Issue::warning(
-                    Span::new(at, after),
-                    format!("`{word}` needs a coordinate target"),
-                ));
-                at = skip_optional_groups(src, after, to, issues);
-                continue;
+                "node" | "pic" => {
+                    issues.push(Issue::warning(
+                        keyword.span,
+                        format!(
+                            "`{}` is not rendered yet (text engine deferred)",
+                            keyword.keyword
+                        ),
+                    ));
+                }
+                "plot" | "parabola" | "coordinates" | "let" | "svg" | "decorate" | "child"
+                | "graph" => {
+                    issues.push(Issue::error(
+                        keyword.span,
+                        format!("`{}` is not supported yet", keyword.keyword),
+                    ));
+                }
+                "" => {}
+                other => {
+                    issues.push(Issue::error(
+                        keyword.span,
+                        format!("unsupported path item `{other}`"),
+                    ));
+                }
+            },
+            PathItem::PathComment(comment) => {
+                let _ = comment;
+                // Comments carry no geometry; skip them.
             }
-            "node" | "pic" => {
-                issues.push(Issue::warning(
-                    Span::new(at, after),
-                    format!("`{word}` is not rendered yet (text engine deferred)"),
-                ));
-                at = skip_optional_groups(src, after, to, issues);
-                continue;
-            }
-            "plot" | "parabola" | "coordinates" | "let" | "svg" | "decorate" | "child"
-            | "graph" => {
+            PathItem::Unknown(unknown) => {
                 issues.push(Issue::error(
-                    Span::new(at, after),
-                    format!("`{word}` is not supported yet"),
+                    unknown.span,
+                    format!("unsupported path item `{}`", unknown.raw),
                 ));
-                break;
             }
-            "" => {
-                at = (at + 1).min(to);
-                continue;
-            }
-            other => {
-                issues.push(Issue::error(
-                    Span::new(at, after),
-                    format!("unsupported path item `{other}`"),
+            PathItem::Node(_)
+            | PathItem::PathForeach(_)
+            | PathItem::GraphOperation(_)
+            | PathItem::PlotOperation(_)
+            | PathItem::PicOperation(_)
+            | PathItem::ToOperation(_)
+            | PathItem::EdgeOperation(_)
+            | PathItem::ChildOperation(_)
+            | PathItem::EdgeFromParentOperation(_)
+            | PathItem::SvgOperation(_)
+            | PathItem::LetOperation(_)
+            | PathItem::DecorateOperation(_)
+            | PathItem::CoordinateOperation(_) => {
+                issues.push(Issue::warning(
+                    item.span(),
+                    "path item is not rendered yet (text engine deferred)",
                 ));
-                break;
             }
         }
-        at = after;
     }
+
     flush(&mut builder, ctx, &mut elements);
     elements
+}
+
+/// Reconstruct the inner coordinate text (without parens) from a
+/// [`CoordinateItem`], preserving cartesian `x,y`, polar `angle:radius`,
+/// and bare-name forms.
+fn coordinate_inner(coord: &CoordinateItem) -> String {
+    match coord.form {
+        CoordinateForm::Polar => format!("{}:{}", coord.x, coord.y),
+        CoordinateForm::Cartesian => format!("{},{}", coord.x, coord.y),
+        CoordinateForm::Named => coord.x.clone(),
+        _ => {
+            let raw = coord.raw.trim();
+            if raw.starts_with('(') && raw.ends_with(')') && raw.len() >= 2 {
+                raw[1..raw.len() - 1].to_string()
+            } else {
+                raw.to_string()
+            }
+        }
+    }
 }
 
 /// Emit the shape a pending keyword described from its `[...]` options.
@@ -574,26 +477,4 @@ fn flush(builder: &mut Builder, ctx: &PathContext<'_>, elements: &mut Vec<SceneE
         elements.push(path_element(ctx, cmds, builder.bbox));
     }
     builder.reset();
-}
-
-fn relative_kind(src: &str, open: usize) -> Relative {
-    if open >= 2 && &src[open - 2..open] == "++" {
-        Relative::PlusPlus
-    } else if open >= 1 && src.as_bytes()[open - 1] == b'+' {
-        Relative::Plus
-    } else {
-        Relative::Absolute
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn relative_prefixes_are_detected() {
-        assert_eq!(relative_kind("++(1,1)", 2), Relative::PlusPlus);
-        assert_eq!(relative_kind("+(1,1)", 1), Relative::Plus);
-        assert_eq!(relative_kind("--(1,1)", 2), Relative::Absolute);
-    }
 }

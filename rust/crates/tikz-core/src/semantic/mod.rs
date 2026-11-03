@@ -18,9 +18,9 @@ pub mod shapes;
 pub mod style;
 pub mod transform;
 
-use crate::figure_scan::scan_tikz_figures;
 use crate::ids::path_statement_id;
 use crate::options::parse_option_list_raw;
+use crate::parser::{convert_parsed_option_list, parse_tex};
 use crate::scene::{Paint, Scene, SceneElement, SceneText};
 use crate::semantic::pathscan::NamedCoordinates;
 use crate::span::Span;
@@ -33,67 +33,102 @@ use style::StyleState;
 
 /// Compile the whole source into a scene plus the issues found on the way.
 ///
-/// Multi-figure documents are not supported yet: more than one `tikzpicture`
-/// is an error, so the canvas never silently shows one figure of several.
+/// Every `tikzpicture` environment in the document is compiled into one
+/// merged [`Scene`]. Each figure gets its own figure-level option state and
+/// its own named-coordinate scope, so options and `(name)` definitions never
+/// leak between figures. Statement ids are drawn from a global counter so
+/// `data-source-id`s stay unique across figures (for a single figure they are
+/// the legacy `path:N`, `node:N` ids).
+///
+/// Errors stop the document: if any figure produces an error-severity issue,
+/// the whole result is `Err`, but all figures are still evaluated so the UI
+/// can show whatever is renderable.
 pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
-    let figures = scan_tikz_figures(source);
-    let figure = match figures.as_slice() {
-        [one] => one,
-        [] => {
-            return Err(vec![Issue::error(
-                Span::new(0, source.len()),
-                "no tikzpicture found",
-            )])
-        }
-        [_, second, ..] => {
-            return Err(vec![Issue::error(
-                second.span,
-                "multi-figure documents are not supported yet",
-            )])
-        }
-    };
-
-    let mut issues = Vec::new();
-    let (mut cursor, end) = (figure.begin_span.to, figure.end_span.from);
-    cursor = skip_trivia(source, cursor, end);
-    let mut figure_state = StyleState::default();
-    if source[cursor..end].starts_with('[') {
-        let Some(close) = matching(source, cursor, end, b'[', b']') else {
-            return Err(vec![Issue::error(
-                Span::new(cursor, end),
-                "unterminated figure options",
-            )]);
-        };
-        let list = parse_option_list_raw(&source[cursor..=close], cursor);
-        figure_state.apply(&list, &mut issues);
-        cursor = close + 1;
+    let document = parse_tex(source);
+    if document.figures.is_empty() {
+        return Err(document
+            .diagnostics
+            .into_iter()
+            .map(convert_parsed_diagnostic)
+            .collect());
     }
 
-    let mut scene = Scene::default();
-    // Named coordinates defined by `\node (name)` / `\coordinate (name)` within
-    // this figure, resolved when a bare `(name)` is used in a path.
-    let mut named = NamedCoordinates::default();
-    for (index, (from, to, terminated)) in split_statements(source, cursor, end)
+    let mut issues: Vec<Issue> = document
+        .diagnostics
         .into_iter()
-        .enumerate()
-    {
-        if !terminated {
-            issues.push(Issue::error(
-                Span::new(from, to),
-                "statement is missing its terminating `;`",
-            ));
-            continue;
+        .map(convert_parsed_diagnostic)
+        .collect();
+    let mut scene = Scene::default();
+    // Global statement counter: keeps `data-source-id`s unique across figures
+    // and byte-identical to the legacy `path:N` scheme for a single figure.
+    let mut next_statement_index = 0usize;
+
+    for figure in &document.figures {
+        let mut figure_state = StyleState::default();
+        let mut named = NamedCoordinates::default();
+
+        // Figure-level options.
+        if let Some(options) = &figure.options {
+            let list = convert_parsed_option_list(options.clone());
+            figure_state.apply(&list, &mut issues);
         }
-        compile_statement(
-            source,
-            &mut figure_state,
-            &mut named,
-            index,
-            from,
-            to,
-            &mut scene,
-            &mut issues,
-        );
+
+        for stmt in &figure.statements {
+            let index = next_statement_index;
+            next_statement_index += 1;
+
+            match stmt.kind.as_str() {
+                "Path" => match stmt.command.as_deref() {
+                    Some("node") => {
+                        let (_command, after) = read_command(source, stmt.span.from, stmt.span.to);
+                        compile_node_statement(
+                            source,
+                            &figure_state,
+                            &mut named,
+                            index,
+                            after,
+                            stmt.span.to,
+                            &mut scene,
+                            &mut issues,
+                        );
+                    }
+                    Some("coordinate") => {
+                        let (_command, after) = read_command(source, stmt.span.from, stmt.span.to);
+                        compile_coordinate_statement(
+                            source,
+                            &figure_state,
+                            &mut named,
+                            index,
+                            after,
+                            stmt.span.to,
+                            &mut issues,
+                        );
+                    }
+                    Some(command) => compile_statement_from_ast(
+                        source,
+                        &mut figure_state,
+                        &mut named,
+                        index,
+                        command,
+                        &stmt.items,
+                        &mut scene,
+                        &mut issues,
+                    ),
+                    None => {
+                        issues.push(Issue::error(
+                            stmt.span,
+                            "statement is missing its terminating `;`",
+                        ));
+                    }
+                },
+                other => {
+                    issues.push(Issue::warning(
+                        stmt.span,
+                        format!("`\\{other}` statements are not supported yet"),
+                    ));
+                }
+            }
+        }
     }
 
     if issues.iter().any(|issue| issue.severity == Severity::Error) {
@@ -103,43 +138,19 @@ pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
     }
 }
 
-/// Compile one `;`-terminated statement (`to` excludes the `;`).
+/// Compile one `;`-terminated path statement from its [`ParsedStatement`] AST
+/// items, replacing the legacy text scanner.
 #[allow(clippy::too_many_arguments)]
-fn compile_statement(
+fn compile_statement_from_ast(
     source: &str,
     figure_state: &mut StyleState,
     named: &mut NamedCoordinates,
     index: usize,
-    from: usize,
-    to: usize,
+    command: &str,
+    items: &[crate::parser::ParsedPathItem],
     scene: &mut Scene,
     issues: &mut Vec<Issue>,
 ) {
-    let at = skip_trivia(source, from, to);
-    if at >= to {
-        return; // only whitespace/comments before the `;`
-    }
-    let (command, after) = read_command(source, at, to);
-
-    // `\node` statements build text elements instead of paths.
-    if command == "node" {
-        return compile_node_statement(
-            source,
-            figure_state,
-            named,
-            index,
-            after,
-            to,
-            scene,
-            issues,
-        );
-    }
-
-    // `\coordinate (name) at (x,y);` defines a named coordinate, no element.
-    if command == "coordinate" {
-        return compile_coordinate_statement(source, figure_state, named, index, after, to, issues);
-    }
-
     let mut state = figure_state.clone();
     match command {
         "draw" | "path" => {}
@@ -153,50 +164,52 @@ fn compile_statement(
         }
         "clip" => {
             issues.push(Issue::warning(
-                Span::new(at, after),
+                Span::new(
+                    items.first().map(|i| i.span.from).unwrap_or(0),
+                    items.last().map(|i| i.span.to).unwrap_or(0),
+                ),
                 "`\\clip` is ignored (clipping paths are not supported yet)",
             ));
             return;
         }
         "tikzset" | "tikzstyle" => {
-            // `\tikzset` / `\tikzstyle` define style aliases (e.g.
-            // `\tikzset{box/.style={draw, circle}}`). The option list was
-            // parsed into `state.style_definitions` by `apply_kv`; copy those
-            // definitions back to the figure state so they persist across
-            // statements.
             figure_state.style_definitions = state.style_definitions.clone();
             return;
         }
         other => {
             issues.push(Issue::warning(
-                Span::new(at, to),
+                Span::new(
+                    items.first().map(|i| i.span.from).unwrap_or(0),
+                    items.last().map(|i| i.span.to).unwrap_or(0),
+                ),
                 format!("`\\{other}` statements are not supported yet"),
             ));
             return;
         }
     }
-    let mut cursor = skip_trivia(source, after, to);
-    if source[cursor..to].starts_with('[') {
-        let Some(close) = matching(source, cursor, to, b'[', b']') else {
-            issues.push(Issue::error(
-                Span::new(cursor, to),
-                "unterminated option list",
-            ));
-            return;
-        };
-        let list = parse_option_list_raw(&source[cursor..=close], cursor);
-        state.apply(&list, issues);
-        cursor = close + 1;
-    }
+
+    // Parse command name + items into PathItem AST.
+    let span = items
+        .first()
+        .map(|i| i.span)
+        .unwrap_or_else(|| Span::new(0, 0));
+    let stmt = crate::parser::ParsedStatement {
+        kind: "Path".to_string(),
+        id: path_statement_id(index),
+        span,
+        command: Some(command.to_string()),
+        items: items.to_vec(),
+    };
+    let (_command, path_items) = crate::parser::parsed_statement_to_ast(source, &stmt);
+
     let mut ctx = PathContext {
-        source,
         source_id: path_statement_id(index),
         state,
         named,
     };
     scene
         .elements
-        .extend(pathbuild::build_path(&mut ctx, cursor, to, issues));
+        .extend(pathbuild::build_path(&mut ctx, &path_items, issues));
 }
 
 /// Compile one `\node … ;` statement into a [`SceneText`] element.
@@ -218,11 +231,15 @@ fn compile_node_statement(
     scene: &mut Scene,
     issues: &mut Vec<Issue>,
 ) {
+    // Skip non-char-boundary bytes (invalid UTF-8 from fuzz input).
     let mut cursor = skip_trivia(source, from, to);
+    while cursor < to && !source.is_char_boundary(cursor) {
+        cursor += 1;
+    }
     let mut state = figure_state.clone();
 
     // Options `[…]`.
-    if source[cursor..to].starts_with('[') {
+    if cursor < to && source[cursor..].starts_with('[') {
         let Some(close) = matching(source, cursor, to, b'[', b']') else {
             issues.push(Issue::error(
                 Span::new(cursor, to),
@@ -438,6 +455,14 @@ fn compile_coordinate_statement(
     }
 }
 
+/// Convert a parser [`ParsedDiagnostic`] into a semantic [`Issue`].
+fn convert_parsed_diagnostic(d: crate::parser::ParsedDiagnostic) -> Issue {
+    match d.severity.as_str() {
+        "error" => Issue::error(d.span, d.message),
+        _ => Issue::warning(d.span, d.message),
+    }
+}
+
 /// `\fill` with no colour paints the current colour; the port's base stroke
 /// doubles as that "current colour" default.
 fn fill_from_stroke(stroke: &Paint) -> Paint {
@@ -447,50 +472,8 @@ fn fill_from_stroke(stroke: &Paint) -> Paint {
     }
 }
 
-/// Read a `\name` command, returning its name without the backslash.
-fn read_command(source: &str, at: usize, to: usize) -> (&str, usize) {
-    let bytes = source.as_bytes();
-    if bytes.get(at) != Some(&b'\\') {
-        return ("", at);
-    }
-    let mut end = at + 1;
-    while end < to && (bytes[end].is_ascii_alphabetic() || bytes[end] == b'*') {
-        end += 1;
-    }
-    (&source[at + 1..end], end)
-}
-
-/// Split `[from, end)` at top-level `;` into `(from, to, terminated)`.
-///
-/// The final unterminated chunk is returned too (`terminated == false`), so a
-/// missing `;` or trailing junk is diagnosed rather than ignored.
-fn split_statements(src: &str, from: usize, end: usize) -> Vec<(usize, usize, bool)> {
-    let bytes = src.as_bytes();
-    let (mut out, mut start, mut depth, mut at) = (Vec::new(), from, 0i32, from);
-    while at < end {
-        match bytes[at] {
-            b'%' => {
-                while at < end && bytes[at] != b'\n' {
-                    at += 1;
-                }
-                continue;
-            }
-            b'{' | b'[' | b'(' => depth += 1,
-            b'}' | b']' | b')' => depth -= 1,
-            b';' if depth <= 0 => {
-                out.push((start, at, true));
-                start = at + 1;
-            }
-            _ => {}
-        }
-        at += 1;
-    }
-    if skip_trivia(src, start, end) < end {
-        out.push((start, end, false));
-    }
-    out
-}
-
+/// Skip ASCII whitespace and `%` comments (single-pass, used by the
+/// statement scanners).
 fn skip_trivia(src: &str, mut at: usize, to: usize) -> usize {
     while at < to {
         let byte = src.as_bytes()[at];
@@ -506,6 +489,20 @@ fn skip_trivia(src: &str, mut at: usize, to: usize) -> usize {
     }
     at
 }
+
+/// Read a `\name` command, returning its name without the backslash.
+fn read_command(source: &str, at: usize, to: usize) -> (&str, usize) {
+    let bytes = source.as_bytes();
+    if bytes.get(at) != Some(&b'\\') {
+        return ("", at);
+    }
+    let mut end = at + 1;
+    while end < to && (bytes[end].is_ascii_alphabetic() || bytes[end] == b'*') {
+        end += 1;
+    }
+    (&source[at + 1..end], end)
+}
+
 /// Index of the delimiter closing the one at `open` (comments are inert).
 fn matching(src: &str, open: usize, end: usize, lo: u8, hi: u8) -> Option<usize> {
     let bytes = src.as_bytes();
@@ -596,9 +593,10 @@ mod tests {
 
     #[test]
     fn circle_and_ellipse_keep_their_legacy_element_kinds() {
+        eprintln!("DEBUG ellipse test");
         let (scene, issues) = scene_of(
-            "\\begin{tikzpicture}\\draw (3,3) circle [radius=0.6];\\draw[purple] (2,1) ellipse (0.5 and 0.25);\\end{tikzpicture}",
-        );
+        "\\begin{tikzpicture}\\draw (3,3) circle [radius=0.6];\\draw[purple] (2,1) ellipse (0.5 and 0.25);\\end{tikzpicture}",
+    );
         assert!(issues.is_empty(), "{issues:?}");
         assert!(matches!(scene.elements[0], SceneElement::Path(_)));
         match &scene.elements[1] {
@@ -709,8 +707,33 @@ mod tests {
     }
 
     #[test]
-    fn multiple_figures_are_reported() {
-        let source = "\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}";
-        assert!(compile_scene(source).is_err());
+    fn multiple_figures_render_into_one_scene() {
+        let source =
+        "\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}";
+        let (scene, issues) = compile_scene(source).expect("multi-figure documents must compile");
+        // One path element per figure, in document order.
+        assert_eq!(scene.len(), 2);
+        assert!(issues.is_empty(), "{issues:?}");
+        // Source ids stay unique across figures via the global statement counter.
+        let mut paths = scene.paths();
+        assert_eq!(paths.next().unwrap().source_id, "path:0");
+        assert_eq!(paths.next().unwrap().source_id, "path:1");
+    }
+
+    #[test]
+    fn figure_options_do_not_leak_between_figures() {
+        let source =
+        "\\begin{tikzpicture}[red]\\draw (0,0)--(1,0);\\end{tikzpicture}\\begin{tikzpicture}\\draw (0,0)--(1,0);\\end{tikzpicture}";
+        let (scene, issues) = compile_scene(source).expect("multi-figure documents must compile");
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(scene.len(), 2);
+        let mut paths = scene.paths();
+        let first = paths.next().unwrap();
+        let second = paths.next().unwrap();
+        assert_eq!(
+            first.style.stroke,
+            crate::scene::Paint::Rgb(0xff, 0x00, 0x00)
+        );
+        assert_eq!(second.style.stroke, crate::scene::Paint::Black);
     }
 }

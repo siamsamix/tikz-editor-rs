@@ -16,7 +16,16 @@
 
 use crate::figure_scan::{scan_tikz_figures, ScannedFigure};
 use crate::ids::path_statement_id;
-use crate::options::parse_option_list_raw;
+use crate::item_types::{
+    CoordinateForm, CoordinateItem, PathCommentItem, PathKeywordItem, PathOptionItem,
+    RelativeCoordinatePrefix, UnknownPathItem,
+};
+use crate::items::PathItem;
+use crate::items_ops::GroupOptionSource;
+use crate::items_ops::NodeItem;
+use crate::options::{
+    parse_option_list_raw, FlagEntry, KvEntry, OptionEntry, OptionListAst, UnknownEntry,
+};
 use crate::semantic::pathscan::matching;
 use crate::span::Span;
 use serde::Serialize;
@@ -237,6 +246,13 @@ fn split_statements(src: &str, from: usize, end: usize) -> Vec<(usize, usize, bo
     let (mut out, mut start, mut depth, mut scope_depth, mut at) =
         (Vec::new(), from, 0i32, 0i32, from);
     while at < end {
+        // Skip bytes that fall inside a multi-byte UTF-8 sequence (fuzz input).
+        while at < end && !src.is_char_boundary(at) {
+            at += 1;
+        }
+        if at >= end {
+            break;
+        }
         match bytes[at] {
             b'%' => {
                 while at < end && bytes[at] != b'\n' {
@@ -254,8 +270,16 @@ fn split_statements(src: &str, from: usize, end: usize) -> Vec<(usize, usize, bo
         }
         // Detect scope boundaries outside braces. A scope statement terminates
         // at its matching `\end{scope}`, not at an internal `;`.
-        if bytes[at] == b'\\' {
-            let rest = &src[at..end.min(at + 16)];
+        if bytes[at] == b'\\' && src.is_char_boundary(at) {
+            let mut scan_end = end.min(at + 16);
+            while scan_end > at && !src.is_char_boundary(scan_end) {
+                scan_end -= 1;
+            }
+            if scan_end <= at {
+                at += 1;
+                continue;
+            }
+            let rest = &src[at..scan_end];
             if rest.starts_with("\\begin{scope}") {
                 scope_depth += 1;
                 at += "\\begin{scope}".len() - 1;
@@ -361,6 +385,13 @@ fn parse_statement(
     let mut name: Option<String> = None;
     let mut text_group: Option<Span> = None;
     while cursor < body_end {
+        // Skip bytes that are not char boundaries (invalid UTF-8 from fuzz input).
+        while cursor < body_end && !source.is_char_boundary(cursor) {
+            cursor += 1;
+        }
+        if cursor >= body_end {
+            break;
+        }
         let byte = source.as_bytes()[cursor];
         if byte == b'%' {
             let line_end = source[cursor..body_end]
@@ -372,6 +403,7 @@ fn parse_statement(
                 "PathComment",
                 Span::new(cursor, line_end),
                 &source[cursor..line_end],
+                None,
                 None,
                 None,
                 None,
@@ -401,6 +433,7 @@ fn parse_statement(
                 None,
                 None,
                 Some(convert_option_list(list)),
+                None,
             ));
             cursor = close + 1;
             continue;
@@ -422,6 +455,7 @@ fn parse_statement(
                 Some(x),
                 Some(y),
                 Some(form),
+                None,
                 None,
             ));
             cursor = close + 1;
@@ -455,6 +489,7 @@ fn parse_statement(
                 None,
                 None,
                 None,
+                Some(op.to_string()),
             ));
             cursor += 2;
             continue;
@@ -464,19 +499,46 @@ fn parse_statement(
             cursor = (cursor + 1).min(body_end);
             continue;
         }
+        let keyword_span = Span::new(cursor, after);
         let keyword = match word {
-            "--" | "|-" | "-|" | ".." => word.to_string(),
+            "--" | "|-" | "-|" | ".." => (word.to_string(), keyword_span),
             "at" | "bend" | "cycle" | "circle" | "controls" | "and" | "rectangle" | "ellipse"
             | "arc" | "grid" | "plot" | "coordinates" | "parabola" | "sin" | "cos" => {
-                word.to_string()
+                (word.to_string(), keyword_span)
+            }
+            "node" | "pic" => {
+                // Inline `node`/`pic` within a path statement may carry optional
+                // `[options]` and a trailing `{text}` group. Consume them as part
+                // of this keyword item so the evaluator sees one atomic item.
+                let item_start = cursor;
+                let mut item_end = after;
+                while item_end < body_end {
+                    item_end = skip_trivia(source, item_end, body_end);
+                    if source[item_end..].starts_with('[') {
+                        if let Some(close) = matching(source, item_end, body_end, b'[', b']') {
+                            item_end = close + 1;
+                            continue;
+                        }
+                    }
+                    if source[item_end..].starts_with('{') {
+                        if let Some(close) = matching(source, item_end, body_end, b'{', b'}') {
+                            item_end = close + 1;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+                let span = Span::new(item_start, item_end);
+                (word.to_string(), span)
             }
             _ => {
                 items.push(path_item(
                     statement_index,
                     &mut item_index,
                     "Unknown",
-                    Span::new(cursor, after),
+                    keyword_span,
                     word,
+                    None,
                     None,
                     None,
                     None,
@@ -490,18 +552,19 @@ fn parse_statement(
             statement_index,
             &mut item_index,
             "PathKeyword",
-            Span::new(cursor, after),
-            word,
+            keyword.1,
+            &keyword.0,
             None,
             None,
             None,
             None,
+            Some(keyword.0.clone()),
         ));
         // store keyword text
         if let Some(last) = items.last_mut() {
-            last.keyword = Some(keyword);
+            last.keyword = Some(keyword.0.clone());
         }
-        cursor = after;
+        cursor = keyword.1.to;
     }
 
     // Emit the trailing `{text}` group as a Node item for `\node` statements.
@@ -599,6 +662,7 @@ fn path_item(
     y: Option<String>,
     form: Option<String>,
     options: Option<ParsedOptionList>,
+    keyword: Option<String>,
 ) -> ParsedPathItem {
     let id = format!("{kind}:{statement_index}:{index}");
     *index += 1;
@@ -610,7 +674,7 @@ fn path_item(
         x,
         y,
         form,
-        keyword: None,
+        keyword,
         options,
         text: None,
         text_span: None,
@@ -653,6 +717,169 @@ fn convert_option_list(list: crate::options::OptionListAst) -> ParsedOptionList 
             })
             .collect(),
     }
+}
+
+/// Convert a [`ParsedOptionList`] into an [`OptionListAst`] for the AST path item.
+pub(crate) fn convert_parsed_option_list(list: ParsedOptionList) -> OptionListAst {
+    OptionListAst {
+        span: list.span,
+        raw: list.raw,
+        entries: list
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let ParsedOptionEntry {
+                    kind,
+                    span,
+                    key,
+                    value_raw,
+                    raw,
+                } = entry;
+                if kind == "kv" {
+                    OptionEntry::KV(KvEntry {
+                        key: key.unwrap_or_default(),
+                        value_raw: value_raw.unwrap_or_default(),
+                        span,
+                        key_span: span,
+                        value_span: None,
+                        raw,
+                    })
+                } else if kind == "flag" {
+                    OptionEntry::Flag(FlagEntry {
+                        key: key.unwrap_or_default(),
+                        span,
+                        key_span: span,
+                        raw,
+                    })
+                } else {
+                    OptionEntry::Unknown(UnknownEntry { span, raw })
+                }
+            })
+            .collect(),
+    }
+}
+
+/// Detect the `+`/`++` relative prefix immediately before a coordinate span.
+fn relative_prefix_for(source: &str, span: Span) -> Option<RelativeCoordinatePrefix> {
+    if span.from >= 2 {
+        let start = span.from - 2;
+        if source.is_char_boundary(start)
+            && source.is_char_boundary(span.from)
+            && &source[start..span.from] == "++"
+        {
+            return Some(RelativeCoordinatePrefix::PlusPlus);
+        }
+    }
+    if span.from >= 1
+        && source.is_char_boundary(span.from - 1)
+        && source.is_char_boundary(span.from)
+        && source.as_bytes()[span.from - 1] == b'+'
+    {
+        return Some(RelativeCoordinatePrefix::Plus);
+    }
+    None
+}
+
+/// Map a parsed coordinate form string to [`CoordinateForm`].
+fn map_coordinate_form(form: Option<&str>) -> CoordinateForm {
+    match form {
+        Some("cartesian") => CoordinateForm::Cartesian,
+        Some("polar") => CoordinateForm::Polar,
+        Some("named") => CoordinateForm::Named,
+        _ => CoordinateForm::Unknown,
+    }
+}
+
+/// Convert one [`ParsedPathItem`] into a [`PathItem`] AST node.
+fn parsed_path_item_to_path_item(
+    source: &str,
+    item: &ParsedPathItem,
+    index: &mut usize,
+) -> PathItem {
+    let id = item.id.clone();
+    let span = item.span;
+    *index += 1;
+    match item.kind.as_str() {
+        "Coordinate" => PathItem::Coordinate(CoordinateItem {
+            id,
+            span,
+            options_span: None,
+            options: None,
+            relative_prefix: relative_prefix_for(source, span),
+            x: item.x.clone().unwrap_or_default(),
+            y: item.y.clone().unwrap_or_default(),
+            z: None,
+            raw: item.raw.clone(),
+            form: map_coordinate_form(item.form.as_deref()),
+        }),
+        "PathKeyword" => PathItem::PathKeyword(PathKeywordItem {
+            id,
+            span,
+            keyword: item.keyword.clone().unwrap_or_default(),
+        }),
+        "PathOption" => PathItem::PathOption(PathOptionItem {
+            id,
+            span,
+            raw: item.raw.clone(),
+            options: item
+                .options
+                .as_ref()
+                .map(|list| convert_parsed_option_list(list.clone()))
+                .unwrap_or_else(|| OptionListAst {
+                    span,
+                    raw: String::new(),
+                    entries: Vec::new(),
+                }),
+        }),
+        "PathComment" => PathItem::PathComment(PathCommentItem {
+            id,
+            span,
+            raw: item.raw.clone(),
+        }),
+        "Node" => PathItem::Node(NodeItem {
+            id,
+            span,
+            raw: item.raw.clone(),
+            template_raw: item.template_raw.clone().unwrap_or_default(),
+            name: item.name.clone(),
+            aliases: Vec::new(),
+            options_span: None,
+            options: item
+                .options
+                .as_ref()
+                .map(|list| convert_parsed_option_list(list.clone())),
+            foreach_clauses: Vec::new(),
+            at_span: None,
+            at_raw: None,
+            at_relative_prefix: None,
+            text_source: GroupOptionSource::Group,
+            text_span: item.text_span.unwrap_or(span),
+            text: item.text.clone().unwrap_or_default(),
+            structural_text: None,
+            adornment: None,
+        }),
+        _ => PathItem::Unknown(UnknownPathItem {
+            id,
+            span,
+            raw: item.raw.clone(),
+        }),
+    }
+}
+
+/// Convert a [`ParsedStatement`] into the command name and [`PathItem`] AST nodes.
+///
+/// This bridges the JSON-friendly [`ParsedStatement`] (used by `tikz-cli parse --json`)
+/// and the rich [`PathItem`] AST consumed by the semantic evaluator.
+/// Source spans are preserved exactly.
+pub fn parsed_statement_to_ast(source: &str, stmt: &ParsedStatement) -> (String, Vec<PathItem>) {
+    let command = stmt.command.clone().unwrap_or_default();
+    let mut index = 0usize;
+    let items = stmt
+        .items
+        .iter()
+        .map(|item| parsed_path_item_to_path_item(source, item, &mut index))
+        .collect();
+    (command, items)
 }
 
 fn skip_trivia(src: &str, mut at: usize, to: usize) -> usize {

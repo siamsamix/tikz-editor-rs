@@ -53,12 +53,20 @@ pub struct Issue {
 impl Issue {
     /// An issue that blocks rendering.
     pub fn error(span: Span, message: impl Into<String>) -> Self {
-        Self { severity: Severity::Error, span, message: message.into() }
+        Self {
+            severity: Severity::Error,
+            span,
+            message: message.into(),
+        }
     }
 
     /// An issue that only degrades rendering.
     pub fn warning(span: Span, message: impl Into<String>) -> Self {
-        Self { severity: Severity::Warning, span, message: message.into() }
+        Self {
+            severity: Severity::Warning,
+            span,
+            message: message.into(),
+        }
     }
 
     /// Whether this issue blocks rendering.
@@ -192,7 +200,10 @@ impl StyleState {
                     }
                     return;
                 }
-                issues.push(Issue::warning(span, format!("unsupported option flag `{key}`")));
+                issues.push(Issue::warning(
+                    span,
+                    format!("unsupported option flag `{key}`"),
+                ));
             }
         }
     }
@@ -266,7 +277,10 @@ impl StyleState {
             }
             "dash pattern" | "dash" => match parse_dash_pattern(value_trimmed) {
                 Some(pattern) => self.style.dash = Some(pattern),
-                None => issues.push(Issue::warning(span, format!("dash pattern: `{value_trimmed}`"))),
+                None => issues.push(Issue::warning(
+                    span,
+                    format!("dash pattern: `{value_trimmed}`"),
+                )),
             },
             "dash phase" => match eval_len(value_trimmed, Unit::Pt) {
                 Ok(offset) => self.style.dash_offset = offset,
@@ -359,18 +373,28 @@ impl StyleState {
                 }
                 Err(error) => issues.push(Issue::warning(span, format!("{key}: {error}"))),
             },
-            _ => issues.push(Issue::warning(span, format!("unsupported option `{key}=...`"))),
+            _ => issues.push(Issue::warning(
+                span,
+                format!("unsupported option `{key}=...`"),
+            )),
         }
     }
 }
 
 fn clamp01(value: Result<f64, String>) -> Option<f64> {
-    value.ok().filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0))
+    value
+        .ok()
+        .filter(|v| v.is_finite())
+        .map(|v| v.clamp(0.0, 1.0))
 }
 
 /// Evaluate a length and report whether the source carried an explicit unit.
 pub fn eval_len_flagged(raw: &str, default_unit: Unit) -> Result<(f64, bool), String> {
-    let trimmed = raw.trim().trim_start_matches('{').trim_end_matches('}').trim();
+    let trimmed = raw
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim();
     let explicit = trimmed.chars().any(|c| c.is_ascii_alphabetic());
     Ok((eval_len(trimmed, default_unit)?, explicit))
 }
@@ -390,18 +414,29 @@ pub fn parse_dash_pattern(raw: &str) -> Option<Vec<f64>> {
 
 /// Parse `{(x,y)}` / `(x,y)` into a canvas-space point.
 pub fn parse_point(raw: &str) -> Result<Vec2, String> {
-    let inner = raw.trim().trim_start_matches('{').trim_end_matches('}').trim();
+    let inner = raw
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim();
     let inner = inner.trim_start_matches('(').trim_end_matches(')');
     let parts: Vec<&str> = inner.split(',').collect();
     if parts.len() != 2 {
         return Err(format!("expected `(x,y)`, got `{raw}`"));
     }
-    Ok(Vec2::new(eval_len(parts[0], Unit::Cm)?, eval_len(parts[1], Unit::Cm)?))
+    Ok(Vec2::new(
+        eval_len(parts[0], Unit::Cm)?,
+        eval_len(parts[1], Unit::Cm)?,
+    ))
 }
 
 /// Parse `45:(3,1)` into degrees and a pivot point.
 fn parse_rotate_around(raw: &str) -> Result<(f64, Vec2), String> {
-    let inner = raw.trim().trim_start_matches('{').trim_end_matches('}').trim();
+    let inner = raw
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim();
     let (degrees, point) = inner
         .split_once(':')
         .ok_or_else(|| format!("expected `angle:(x,y)`, got `{raw}`"))?;
@@ -477,7 +512,9 @@ mod tests {
     fn unsupported_options_warn_instead_of_failing() {
         let (_, issues) = applied("[double, decoration={snake}]");
         assert_eq!(issues.len(), 2);
-        assert!(issues.iter().all(|issue| issue.severity == Severity::Warning));
+        assert!(issues
+            .iter()
+            .all(|issue| issue.severity == Severity::Warning));
     }
 
     #[test]

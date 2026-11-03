@@ -179,7 +179,8 @@ impl Parser<'_> {
         while self.at < self.bytes.len()
             && (self.bytes[self.at].is_ascii_digit()
                 || self.bytes[self.at] == b'.'
-                || (self.at == start && (self.bytes[self.at] == b'-' || self.bytes[self.at] == b'+')))
+                || (self.at == start
+                    && (self.bytes[self.at] == b'-' || self.bytes[self.at] == b'+')))
         {
             self.at += 1;
         }
@@ -188,7 +189,8 @@ impl Parser<'_> {
         }
         let text = std::str::from_utf8(&self.bytes[start..self.at])
             .map_err(|_| "not valid UTF-8".to_string())?;
-        text.parse::<f64>().map_err(|_| format!("not a number: `{text}`"))
+        text.parse::<f64>()
+            .map_err(|_| format!("not a number: `{text}`"))
     }
 }
 
@@ -215,7 +217,9 @@ mod tests {
     #[test]
     fn errors_are_typed_and_never_panic() {
         assert!(eval_number("2cm").unwrap_err().contains("without a unit"));
-        assert!(eval_len("1em", Unit::Cm).unwrap_err().contains("unsupported unit"));
+        assert!(eval_len("1em", Unit::Cm)
+            .unwrap_err()
+            .contains("unsupported unit"));
         assert!(eval_number("sin(30)").is_err());
         assert!(eval_number("1/0").unwrap_err().contains("division by zero"));
         assert!(eval_number("(1").is_err());

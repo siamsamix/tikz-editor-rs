@@ -229,9 +229,13 @@ pub fn map_colorlet(
     value_group: Option<Span>,
     id: String,
 ) -> ColorletStatement {
-    let name_raw = name_group.map_or(String::new(), |group| extract_group_inner_raw(group, source));
+    let name_raw = name_group.map_or(String::new(), |group| {
+        extract_group_inner_raw(group, source)
+    });
     let name_span = name_group.map(|group| to_group_inner_span(group, source));
-    let value_raw = value_group.map_or(String::new(), |group| extract_group_inner_raw(group, source));
+    let value_raw = value_group.map_or(String::new(), |group| {
+        extract_group_inner_raw(group, source)
+    });
     let value_span = value_group.map(|group| to_group_inner_span(group, source));
     ColorletStatement {
         id,
@@ -261,9 +265,13 @@ pub fn map_definecolor(
         span: stmt_span,
         raw: slice_of(source, stmt_span),
         command_raw: "\\definecolor".to_string(),
-        name_raw: name_group.map_or(String::new(), |group| extract_group_inner_raw(group, source)),
+        name_raw: name_group.map_or(String::new(), |group| {
+            extract_group_inner_raw(group, source)
+        }),
         name_span: name_group.map(|group| to_group_inner_span(group, source)),
-        model_raw: model_group.map_or(String::new(), |group| extract_group_inner_raw(group, source)),
+        model_raw: model_group.map_or(String::new(), |group| {
+            extract_group_inner_raw(group, source)
+        }),
         model_span: model_group.map(|group| to_group_inner_span(group, source)),
         specification_raw: specification_group.map_or(String::new(), |group| {
             extract_group_inner_raw(group, source)
@@ -454,7 +462,10 @@ mod stmt_style_unit_tests {
         );
         assert_eq!(stmt.libraries_raw, "shapes, arrows.meta");
         assert_eq!(stmt.libraries_span, Some(Span::new(16, 35)));
-        assert_eq!(stmt.libraries, vec!["shapes".to_string(), "arrows.meta".to_string()]);
+        assert_eq!(
+            stmt.libraries,
+            vec!["shapes".to_string(), "arrows.meta".to_string()]
+        );
     }
 
     #[test]

@@ -141,7 +141,14 @@ pub fn build_path(
             let list = parse_option_list_raw(&src[at..=close], at);
             ctx.state.apply(&list, issues);
             if matches!(pending, Pending::Circle | Pending::Ellipse | Pending::Arc) {
-                finish_pending_shape(&mut builder, ctx, pending, Span::new(at, close + 1), issues, &mut elements);
+                finish_pending_shape(
+                    &mut builder,
+                    ctx,
+                    pending,
+                    Span::new(at, close + 1),
+                    issues,
+                    &mut elements,
+                );
                 pending = Pending::None;
             }
             // `grid [step=...] (corner)` keeps the pending flag: the corner
@@ -163,11 +170,15 @@ pub fn build_path(
                     Err(error) => issues.push(Issue::error(span, error)),
                 },
                 Pending::Circle => match parse_length(&inner) {
-                    Ok(radius) => emit_circle(&mut builder, ctx, &mut elements, radius, span, issues),
+                    Ok(radius) => {
+                        emit_circle(&mut builder, ctx, &mut elements, radius, span, issues)
+                    }
                     Err(error) => issues.push(Issue::error(span, error)),
                 },
                 Pending::Ellipse => match parse_radii(&inner) {
-                    Ok((rx, ry)) => emit_ellipse(&mut builder, ctx, &mut elements, rx, ry, span, issues),
+                    Ok((rx, ry)) => {
+                        emit_ellipse(&mut builder, ctx, &mut elements, rx, ry, span, issues)
+                    }
                     Err(error) => issues.push(Issue::error(span, error)),
                 },
                 Pending::Arc => match parse_arc_shorthand(&inner) {
@@ -233,7 +244,10 @@ pub fn build_path(
                     continue;
                 }
             }
-            issues.push(Issue::error(Span::new(at, to), "`|-`/`-|` needs a coordinate"));
+            issues.push(Issue::error(
+                Span::new(at, to),
+                "`|-`/`-|` needs a coordinate",
+            ));
             break;
         }
         if byte == b';' {
@@ -325,7 +339,11 @@ fn finish_pending_shape(
             let radius = state
                 .radius
                 .map(|value| (value, !state.radius_uses_basis))
-                .or_else(|| state.x_radius.map(|value| (value, !state.x_radius_uses_basis)));
+                .or_else(|| {
+                    state
+                        .x_radius
+                        .map(|value| (value, !state.x_radius_uses_basis))
+                });
             match radius {
                 Some(radius) => emit_circle(builder, ctx, elements, radius, span, issues),
                 None => issues.push(Issue::error(span, "`circle` needs a radius")),
@@ -358,7 +376,12 @@ fn finish_pending_shape(
                 (Some(start), Some(end), Some(rx), Some(ry)) => emit_arc(
                     builder,
                     ctx,
-                    ArcParams { start_angle: start, end_angle: end, rx, ry },
+                    ArcParams {
+                        start_angle: start,
+                        end_angle: end,
+                        rx,
+                        ry,
+                    },
                     span,
                     issues,
                 ),
@@ -373,7 +396,11 @@ fn finish_pending_shape(
     }
 }
 
-pub(crate) fn path_element(ctx: &PathContext<'_>, cmds: Vec<PathCmd>, bbox: Option<(Vec2, Vec2)>) -> SceneElement {
+pub(crate) fn path_element(
+    ctx: &PathContext<'_>,
+    cmds: Vec<PathCmd>,
+    bbox: Option<(Vec2, Vec2)>,
+) -> SceneElement {
     SceneElement::Path(ScenePath {
         source_id: ctx.source_id.clone(),
         cmds,
@@ -399,7 +426,6 @@ fn relative_kind(src: &str, open: usize) -> Relative {
         Relative::Absolute
     }
 }
-
 
 #[cfg(test)]
 mod tests {

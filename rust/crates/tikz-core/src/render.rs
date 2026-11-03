@@ -36,7 +36,10 @@ pub fn render_tex(source: &str) -> Result<String, Vec<Diagnostic>> {
 
 /// Render `source`, returning the SVG and any non-blocking warnings.
 pub fn render_tex_with_warnings(source: &str) -> Result<Rendered, Vec<Diagnostic>> {
-    compile_scene(source).map(|(scene, issues)| Rendered { svg: emit_svg(&scene), warnings: issues })
+    compile_scene(source).map(|(scene, issues)| Rendered {
+        svg: emit_svg(&scene),
+        warnings: issues,
+    })
 }
 
 /// Evaluate `source` into a [`Scene`], failing on any error-severity issue.
@@ -105,15 +108,20 @@ mod tests {
 
     #[test]
     fn integer_polylines_render() {
-        let svg = render_tex("\\begin{tikzpicture}\\draw (0,0) -- (1,0) -- (1,1);\\end{tikzpicture}")
-            .unwrap();
-        assert!(svg.contains(r#"d="M 0 28.4528 L 28.4528 28.4528 L 28.4528 0""#), "{svg}");
+        let svg =
+            render_tex("\\begin{tikzpicture}\\draw (0,0) -- (1,0) -- (1,1);\\end{tikzpicture}")
+                .unwrap();
+        assert!(
+            svg.contains(r#"d="M 0 28.4528 L 28.4528 28.4528 L 28.4528 0""#),
+            "{svg}"
+        );
     }
 
     #[test]
     fn scene_commands_carry_arcs_and_closes() {
-        let scene = compile("\\begin{tikzpicture}\\draw (0,0) -- (1,0) -- cycle;\\end{tikzpicture}")
-            .unwrap();
+        let scene =
+            compile("\\begin{tikzpicture}\\draw (0,0) -- (1,0) -- cycle;\\end{tikzpicture}")
+                .unwrap();
         let path = scene.paths().next().unwrap();
         assert!(matches!(path.cmds.last(), Some(PathCmd::Close)));
     }

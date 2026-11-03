@@ -65,7 +65,10 @@ pub fn parse_foreach_header_raw(raw: &str) -> ParsedForeachHeaderRaw {
     }
 
     let masked = mask_line_comments_preserving_length(header_raw);
-    let empty = ParsedForeachHeaderRaw { variables_raw: String::new(), ..empty };
+    let empty = ParsedForeachHeaderRaw {
+        variables_raw: String::new(),
+        ..empty
+    };
     let Some(in_index) = find_top_level_in_keyword(&masked) else {
         let left = remove_top_level_option_lists(header_raw);
         return ParsedForeachHeaderRaw {
@@ -253,7 +256,10 @@ fn mask_line_comments_preserving_length(input: &str) -> String {
             }
             continue;
         }
-        let prev = index.checked_sub(1).and_then(|from| bytes.get(from)).copied();
+        let prev = index
+            .checked_sub(1)
+            .and_then(|from| bytes.get(from))
+            .copied();
         if byte == b'%' && prev != Some(b'\\') {
             in_comment = true;
             masked.push(b' ');

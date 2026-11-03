@@ -66,7 +66,9 @@ pub fn to_fixed4(value: f64) -> String {
 /// Add one unit in the fourth decimal place to `int_part.frac4`.
 fn round_tie_up(int_part: &str, frac4: &str) -> String {
     let digits = format!("{int_part}{frac4}");
-    let bumped = digits.parse::<u128>().map_or(digits, |n| (n + 1).to_string());
+    let bumped = digits
+        .parse::<u128>()
+        .map_or(digits, |n| (n + 1).to_string());
     let padded = format!("{bumped:0>5}");
     let split = padded.len() - 4;
     format!("{}.{}", &padded[..split], &padded[split..])

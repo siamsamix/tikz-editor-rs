@@ -167,8 +167,20 @@ impl Tok {
 pub fn is_path_keyword_word(word: &str) -> bool {
     matches!(
         word,
-        "at" | "bend" | "cycle" | "circle" | "controls" | "and" | "rectangle" | "ellipse"
-            | "arc" | "grid" | "plot" | "coordinates" | "parabola" | "sin" | "cos"
+        "at" | "bend"
+            | "cycle"
+            | "circle"
+            | "controls"
+            | "and"
+            | "rectangle"
+            | "ellipse"
+            | "arc"
+            | "grid"
+            | "plot"
+            | "coordinates"
+            | "parabola"
+            | "sin"
+            | "cos"
     )
 }
 
@@ -413,7 +425,8 @@ fn lex_backslash(source: &str, bytes: &[u8], cursor: usize, toks: &mut Vec<Tok>)
         return push(TokKind::MatrixRowSepCmd, cursor, 2, toks);
     }
     let mut word_end = cursor + 1;
-    while word_end < bytes.len() && (bytes[word_end].is_ascii_alphabetic() || bytes[word_end] == b'@')
+    while word_end < bytes.len()
+        && (bytes[word_end].is_ascii_alphabetic() || bytes[word_end] == b'@')
     {
         word_end += 1;
     }
@@ -533,7 +546,10 @@ mod tok_unit_tests {
     #[test]
     fn env_literals_adjoin_braces() {
         assert_eq!(tokenize("\\begin{tikzpicture}")[0].kind, TokKind::BeginTikz);
-        assert_eq!(tokenize("\\begin {tikzpicture}")[0].kind, TokKind::CommandName);
+        assert_eq!(
+            tokenize("\\begin {tikzpicture}")[0].kind,
+            TokKind::CommandName
+        );
         assert_eq!(tokenize("\\begin{scope}")[0].kind, TokKind::BeginScope);
         assert_eq!(tokenize("\\end{scope}")[0].kind, TokKind::EndScope);
         // Unknown env name unwinds to CommandName covering `\begin` only.

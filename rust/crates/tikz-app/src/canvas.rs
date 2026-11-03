@@ -51,7 +51,12 @@ pub fn show(
     let painter = painter.with_clip_rect(rect);
 
     painter.rect_filled(rect, 0.0, CANVAS_BG);
-    painter.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, Color32::from_gray(205)), StrokeKind::Inside);
+    painter.rect_stroke(
+        rect,
+        0.0,
+        Stroke::new(1.0_f32, Color32::from_gray(205)),
+        StrokeKind::Inside,
+    );
 
     if response.dragged() {
         camera.pan(response.drag_delta());
@@ -68,7 +73,9 @@ pub fn show(
     }
 
     let mut outcome = CanvasOutcome {
-        cursor_world: response.hover_pos().map(|p| camera.screen_to_world(p, rect)),
+        cursor_world: response
+            .hover_pos()
+            .map(|p| camera.screen_to_world(p, rect)),
         ..Default::default()
     };
 
@@ -141,7 +148,10 @@ fn paint_element(
     if let Some(fill) = paint_color(style.fill) {
         let fill = fill.gamma_multiply(style.fill_opacity as f32);
         for subpath in &subpaths {
-            let points: Vec<Pos2> = subpath.iter().map(|p| camera.world_to_screen(*p, rect)).collect();
+            let points: Vec<Pos2> = subpath
+                .iter()
+                .map(|p| camera.world_to_screen(*p, rect))
+                .collect();
             if points.len() >= 3 {
                 // epaint fills convex polygons only; every shape this slice
                 // emits (rectangle, circle, ellipse) is convex.
@@ -151,9 +161,15 @@ fn paint_element(
     }
     if let Some(stroke_color) = paint_color(style.stroke) {
         let width = ((style.stroke_width * camera.zoom) as f32).max(1.0) + extra_width;
-        let stroke = Stroke::new(width, stroke_color.gamma_multiply(style.stroke_opacity as f32));
+        let stroke = Stroke::new(
+            width,
+            stroke_color.gamma_multiply(style.stroke_opacity as f32),
+        );
         for subpath in &subpaths {
-            let points: Vec<Pos2> = subpath.iter().map(|p| camera.world_to_screen(*p, rect)).collect();
+            let points: Vec<Pos2> = subpath
+                .iter()
+                .map(|p| camera.world_to_screen(*p, rect))
+                .collect();
             for pair in points.windows(2) {
                 painter.line_segment([pair[0], pair[1]], stroke);
             }
@@ -177,7 +193,10 @@ fn paint_highlight(
     let width = ((style.stroke_width * camera.zoom) as f32).max(1.0) + 6.0;
     let stroke = Stroke::new(width, color.gamma_multiply(0.25));
     for subpath in &subpaths {
-        let points: Vec<Pos2> = subpath.iter().map(|p| camera.world_to_screen(*p, rect)).collect();
+        let points: Vec<Pos2> = subpath
+            .iter()
+            .map(|p| camera.world_to_screen(*p, rect))
+            .collect();
         for pair in points.windows(2) {
             painter.line_segment([pair[0], pair[1]], stroke);
         }

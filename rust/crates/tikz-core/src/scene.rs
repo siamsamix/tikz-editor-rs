@@ -296,7 +296,10 @@ impl Scene {
 
     /// Largest stroke half-width over every element.
     pub fn max_half_stroke(&self) -> f64 {
-        self.elements.iter().map(|e| e.style().half_stroke()).fold(0.0, f64::max)
+        self.elements
+            .iter()
+            .map(|e| e.style().half_stroke())
+            .fold(0.0, f64::max)
     }
 }
 
@@ -305,7 +308,12 @@ mod tests {
     use super::*;
 
     fn path(cmds: Vec<PathCmd>, style: PathStyle) -> SceneElement {
-        SceneElement::Path(ScenePath { source_id: "path:0".into(), cmds, style, bbox: None })
+        SceneElement::Path(ScenePath {
+            source_id: "path:0".into(),
+            cmds,
+            style,
+            bbox: None,
+        })
     }
 
     #[test]
@@ -329,7 +337,10 @@ mod tests {
                 PathStyle::default(),
             )],
         };
-        assert_eq!(scene.bounds(), Some((Vec2::new(0.0, -5.0), Vec2::new(3.0, 5.0))));
+        assert_eq!(
+            scene.bounds(),
+            Some((Vec2::new(0.0, -5.0), Vec2::new(3.0, 5.0)))
+        );
     }
 
     #[test]
@@ -340,17 +351,27 @@ mod tests {
                 center: Vec2::new(2.0, 3.0),
                 rx: 1.0,
                 ry: 0.5,
-                style: PathStyle { stroke_width: 2.0, ..PathStyle::default() },
+                style: PathStyle {
+                    stroke_width: 2.0,
+                    ..PathStyle::default()
+                },
             })],
         };
-        assert_eq!(scene.bounds(), Some((Vec2::new(1.0, 2.5), Vec2::new(3.0, 3.5))));
+        assert_eq!(
+            scene.bounds(),
+            Some((Vec2::new(1.0, 2.5), Vec2::new(3.0, 3.5)))
+        );
         assert_eq!(scene.max_half_stroke(), 1.0);
         assert_eq!(scene.paths().count(), 0);
     }
 
     #[test]
     fn half_stroke_ignores_none_stroke() {
-        let invisible = PathStyle { stroke: Paint::None, stroke_width: 4.0, ..PathStyle::default() };
+        let invisible = PathStyle {
+            stroke: Paint::None,
+            stroke_width: 4.0,
+            ..PathStyle::default()
+        };
         assert_eq!(invisible.half_stroke(), 0.0);
         assert_eq!(PathStyle::default().half_stroke(), 0.2);
     }

@@ -39,13 +39,16 @@ impl ViewBox {
             let (x1, y1) = (hi.x + half, hi.y + half);
             acc = Some(match acc {
                 None => (x0, y0, x1, y1),
-                Some((ax0, ay0, ax1, ay1)) => {
-                    (ax0.min(x0), ay0.min(y0), ax1.max(x1), ay1.max(y1))
-                }
+                Some((ax0, ay0, ax1, ay1)) => (ax0.min(x0), ay0.min(y0), ax1.max(x1), ay1.max(y1)),
             });
         }
         let Some((x0, y0, x1, y1)) = acc else {
-            return ViewBox { x: -12.0, y: -12.0, width: 124.0, height: 124.0 };
+            return ViewBox {
+                x: -12.0,
+                y: -12.0,
+                width: 124.0,
+                height: 124.0,
+            };
         };
         ViewBox {
             x: x0 - VIEWBOX_PAD,
@@ -96,7 +99,10 @@ fn path_bbox(path: &ScenePath) -> (crate::units::Vec2, crate::units::Vec2) {
             }
         }
     }
-    acc.unwrap_or((crate::units::Vec2::new(0.0, 0.0), crate::units::Vec2::new(0.0, 0.0)))
+    acc.unwrap_or((
+        crate::units::Vec2::new(0.0, 0.0),
+        crate::units::Vec2::new(0.0, 0.0),
+    ))
 }
 
 /// Emit the SVG document for `scene`.
@@ -149,7 +155,14 @@ fn emit_path(path: &ScenePath, flip_k: f64) -> String {
                     fmt_num(flip_k - to.y)
                 ));
             }
-            PathCmd::Arc { rx, ry, rotation, large, sweep, to } => {
+            PathCmd::Arc {
+                rx,
+                ry,
+                rotation,
+                large,
+                sweep,
+                to,
+            } => {
                 // The y-flip reverses arc direction, so the sweep flag is
                 // inverted on output (legacy `svg/emit.ts:920`).
                 d.push_str(&format!(
@@ -205,7 +218,10 @@ fn style_attrs(style: &PathStyle) -> String {
         let values: Vec<String> = dash.iter().map(|value| fmt_num(*value)).collect();
         out.push_str(&format!(r#" stroke-dasharray="{}""#, values.join(" ")));
         if style.dash_offset.abs() > 1e-6 {
-            out.push_str(&format!(r#" stroke-dashoffset="{}""#, fmt_num(style.dash_offset)));
+            out.push_str(&format!(
+                r#" stroke-dashoffset="{}""#,
+                fmt_num(style.dash_offset)
+            ));
         }
     }
     out
@@ -213,7 +229,10 @@ fn style_attrs(style: &PathStyle) -> String {
 
 /// Attribute escaping: `& < >` plus the double quote (blueprint row 23).
 fn escape_attr(raw: &str) -> String {
-    raw.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    raw.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 #[cfg(test)]
@@ -236,7 +255,10 @@ mod tests {
     fn line(a: (f64, f64), b: (f64, f64)) -> Scene {
         styled(
             PathStyle::default(),
-            vec![PathCmd::Move(Vec2::new(a.0, a.1)), PathCmd::Line(Vec2::new(b.0, b.1))],
+            vec![
+                PathCmd::Move(Vec2::new(a.0, a.1)),
+                PathCmd::Line(Vec2::new(b.0, b.1)),
+            ],
         )
     }
 
@@ -260,17 +282,32 @@ mod tests {
             dash: Some(vec![3.0, 3.0]),
             ..PathStyle::default()
         };
-        let svg = emit_svg(&styled(style, vec![PathCmd::Move(Vec2::new(0.0, 0.0)), PathCmd::Line(Vec2::new(1.0, 0.0))]));
+        let svg = emit_svg(&styled(
+            style,
+            vec![
+                PathCmd::Move(Vec2::new(0.0, 0.0)),
+                PathCmd::Line(Vec2::new(1.0, 0.0)),
+            ],
+        ));
         let expected = r##"stroke="#ff0000" fill="none" stroke-width="2" stroke-linecap="butt" stroke-linejoin="miter" stroke-opacity="1" fill-opacity="1" stroke-dasharray="3 3""##;
         assert!(svg.contains(expected), "{svg}");
     }
 
     #[test]
     fn fill_rule_precedes_stroke_width() {
-        let style = PathStyle { fill: Paint::Rgb(255, 255, 0), even_odd: true, ..PathStyle::default() };
-        let svg = emit_svg(&styled(style, vec![PathCmd::Move(Vec2::new(0.0, 0.0)), PathCmd::Close]));
+        let style = PathStyle {
+            fill: Paint::Rgb(255, 255, 0),
+            even_odd: true,
+            ..PathStyle::default()
+        };
+        let svg = emit_svg(&styled(
+            style,
+            vec![PathCmd::Move(Vec2::new(0.0, 0.0)), PathCmd::Close],
+        ));
         assert!(
-            svg.contains(r##"stroke="black" fill="#ffff00" fill-rule="evenodd" stroke-width="0.4""##),
+            svg.contains(
+                r##"stroke="black" fill="#ffff00" fill-rule="evenodd" stroke-width="0.4""##
+            ),
             "{svg}"
         );
     }
@@ -283,7 +320,10 @@ mod tests {
                 center: Vec2::new(56.9055, 10.0),
                 rx: 14.2264,
                 ry: 7.1132,
-                style: PathStyle { stroke: Paint::Rgb(191, 0, 64), ..PathStyle::default() },
+                style: PathStyle {
+                    stroke: Paint::Rgb(191, 0, 64),
+                    ..PathStyle::default()
+                },
             })],
         };
         let svg = emit_svg(&scene);
@@ -298,10 +338,21 @@ mod tests {
             PathStyle::default(),
             vec![
                 PathCmd::Move(Vec2::new(0.0, 0.0)),
-                PathCmd::Arc { rx: 21.3396, ry: 21.3396, rotation: 0.0, large: false, sweep: true, to: Vec2::new(-42.6792, 0.0) },
+                PathCmd::Arc {
+                    rx: 21.3396,
+                    ry: 21.3396,
+                    rotation: 0.0,
+                    large: false,
+                    sweep: true,
+                    to: Vec2::new(-42.6792, 0.0),
+                },
             ],
         );
-        assert!(emit_svg(&scene).contains("A 21.3396 21.3396 0 0 0 -42.6792 0"), "{}", emit_svg(&scene));
+        assert!(
+            emit_svg(&scene).contains("A 21.3396 21.3396 0 0 0 -42.6792 0"),
+            "{}",
+            emit_svg(&scene)
+        );
     }
 
     #[test]

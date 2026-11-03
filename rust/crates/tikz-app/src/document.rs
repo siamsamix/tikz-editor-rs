@@ -124,9 +124,10 @@ impl Document {
     /// Display name for the window title / toolbar.
     pub fn display_name(&self) -> String {
         match &self.path {
-            Some(path) => path
-                .file_name()
-                .map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned()),
+            Some(path) => path.file_name().map_or_else(
+                || path.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
             None => "untitled.tex".to_string(),
         }
     }

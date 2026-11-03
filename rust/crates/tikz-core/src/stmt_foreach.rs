@@ -80,9 +80,10 @@ pub fn map_foreach(
     };
 
     let options = match (&header.options_raw, &header.options_span) {
-        (Some(options_raw), Some(relative)) => {
-            Some(parse_option_list_raw(options_raw, header_from + relative.from))
-        }
+        (Some(options_raw), Some(relative)) => Some(parse_option_list_raw(
+            options_raw,
+            header_from + relative.from,
+        )),
         _ => None,
     };
     let options_span = header
@@ -210,11 +211,16 @@ mod stmt_foreach_unit_tests {
     fn prefix_is_the_stripped_header() {
         // Without a body the prefix runs to the statement end; here the
         // command span is absent on purpose and the whole span is scanned.
-        let stmt = map_foreach(PREFIX, Span::new(20, 20), None, None, "foreach:4".to_string());
+        let stmt = map_foreach(
+            PREFIX,
+            Span::new(20, 20),
+            None,
+            None,
+            "foreach:4".to_string(),
+        );
         assert_eq!(stmt.header_raw, "");
         assert_eq!(stmt.prefix_raw, "");
         assert_eq!(stmt.variables_raw, "");
         assert_eq!(stmt.list_raw, "");
     }
-
 }

@@ -13,10 +13,10 @@
 //! assert_eq!(list.entries[1].kv().unwrap().key, "fill");
 //! ```
 
+use crate::option_classify::classify_option_token;
 use crate::span::Span;
 use crate::split::{split_top_level_with_ranges, trim_local_bounds};
 use crate::tex_lex::read_tex_balanced_delimited;
-use crate::option_classify::classify_option_token;
 
 /// A single option entry inside an option list.
 #[derive(Debug, Clone, PartialEq)]
@@ -184,7 +184,10 @@ fn find_option_close_index(raw: &str) -> Option<usize> {
 
 /// Parse a style payload value (e.g. the `…` in `\tikzset{A/.style={fill=red}}`)
 /// as an option list, matching the legacy brace/offset handling.
-pub fn parse_style_value_as_option_list(value_raw: &str, absolute_from: usize) -> Option<OptionListAst> {
+pub fn parse_style_value_as_option_list(
+    value_raw: &str,
+    absolute_from: usize,
+) -> Option<OptionListAst> {
     let trimmed = value_raw.trim();
     if trimmed.is_empty() {
         return None;
@@ -194,7 +197,9 @@ pub fn parse_style_value_as_option_list(value_raw: &str, absolute_from: usize) -
     let mut inner_start_offset = 0usize;
     if inner.starts_with('{') && inner.ends_with('}') {
         let without_outer = inner[1..inner.len() - 1].to_string();
-        let leading_inner = without_outer.find(|c: char| !c.is_whitespace()).unwrap_or(0);
+        let leading_inner = without_outer
+            .find(|c: char| !c.is_whitespace())
+            .unwrap_or(0);
         inner_start_offset = 1 + leading_inner;
         inner = without_outer.trim().to_string();
     }
@@ -204,9 +209,18 @@ pub fn parse_style_value_as_option_list(value_raw: &str, absolute_from: usize) -
     }
 
     let has_explicit_brackets = inner.starts_with('[');
-    let option_raw = if has_explicit_brackets { inner.clone() } else { format!("[{inner}]") };
-    let offset_adjustment = if has_explicit_brackets { inner_start_offset } else {
+    let option_raw = if has_explicit_brackets {
+        inner.clone()
+    } else {
+        format!("[{inner}]")
+    };
+    let offset_adjustment = if has_explicit_brackets {
+        inner_start_offset
+    } else {
         inner_start_offset.checked_sub(1)?
     };
-    Some(parse_option_list_raw(&option_raw, absolute_from + offset_adjustment))
+    Some(parse_option_list_raw(
+        &option_raw,
+        absolute_from + offset_adjustment,
+    ))
 }

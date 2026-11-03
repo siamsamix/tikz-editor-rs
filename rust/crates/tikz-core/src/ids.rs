@@ -91,7 +91,11 @@ pub fn node_item_id(statement_index: usize, item_index: usize) -> String {
 }
 
 /// Id of a node foreach clause.
-pub fn node_foreach_clause_id(statement_index: usize, item_index: usize, clause_index: usize) -> String {
+pub fn node_foreach_clause_id(
+    statement_index: usize,
+    item_index: usize,
+    clause_index: usize,
+) -> String {
     format!("node-foreach-clause:{statement_index}:{item_index}:{clause_index}")
 }
 
@@ -131,7 +135,11 @@ pub fn pic_operation_item_id(statement_index: usize, item_index: usize) -> Strin
 }
 
 /// Id of a pic foreach clause.
-pub fn pic_foreach_clause_id(statement_index: usize, item_index: usize, clause_index: usize) -> String {
+pub fn pic_foreach_clause_id(
+    statement_index: usize,
+    item_index: usize,
+    clause_index: usize,
+) -> String {
     format!("pic-foreach-clause:{statement_index}:{item_index}:{clause_index}")
 }
 
@@ -156,7 +164,11 @@ pub fn edge_from_parent_operation_item_id(statement_index: usize, item_index: us
 }
 
 /// Id of a child foreach clause.
-pub fn child_foreach_clause_id(statement_index: usize, item_index: usize, clause_index: usize) -> String {
+pub fn child_foreach_clause_id(
+    statement_index: usize,
+    item_index: usize,
+    clause_index: usize,
+) -> String {
     format!("child-foreach-clause:{statement_index}:{item_index}:{clause_index}")
 }
 

@@ -83,8 +83,22 @@ pub(crate) fn emit_circle(
         vec![
             PathCmd::Move(center),
             PathCmd::Move(right),
-            PathCmd::Arc { rx, ry, rotation: 0.0, large: false, sweep: true, to: left },
-            PathCmd::Arc { rx, ry, rotation: 0.0, large: false, sweep: true, to: right },
+            PathCmd::Arc {
+                rx,
+                ry,
+                rotation: 0.0,
+                large: false,
+                sweep: true,
+                to: left,
+            },
+            PathCmd::Arc {
+                rx,
+                ry,
+                rotation: 0.0,
+                large: false,
+                sweep: true,
+                to: right,
+            },
             PathCmd::Close,
         ],
         bbox,
@@ -102,7 +116,10 @@ pub(crate) fn emit_ellipse(
 ) {
     let (out_rx, out_ry) = scale_radii_pair(&ctx.state.transform, rx, ry);
     if ctx.state.transform.rotate_deg != 0.0 {
-        issues.push(Issue::warning(span, "rotated `ellipse` is emitted axis-aligned"));
+        issues.push(Issue::warning(
+            span,
+            "rotated `ellipse` is emitted axis-aligned",
+        ));
     }
     if out_rx <= 0.0 || out_ry <= 0.0 {
         issues.push(Issue::error(span, "ellipse needs positive radii"));
@@ -134,7 +151,11 @@ pub(crate) fn emit_arc(
     // A radius written without a unit follows the frame transform; one with
     // an explicit unit does not (legacy `usesBasis`).
     let basis = [params.rx, params.ry];
-    let transform = if basis.iter().all(|radius| radius.1) { Transform::default() } else { ctx.state.transform };
+    let transform = if basis.iter().all(|radius| radius.1) {
+        Transform::default()
+    } else {
+        ctx.state.transform
+    };
     let (rx, ry) = (params.rx.0, params.ry.0);
     let start = params.start_angle.to_radians();
     let end = params.end_angle.to_radians();
@@ -203,4 +224,3 @@ pub(crate) fn emit_grid(
     builder.current = Some(transform.apply(corner));
     builder.base = Some(transform.apply(corner));
 }
-

@@ -19,16 +19,26 @@ pub(crate) fn classify_option_token(token: &str, token_from: usize) -> OptionEnt
         let key = key_raw.trim().to_lowercase();
         let value_raw = value_raw_untrimmed.trim();
         if key.is_empty() {
-            return OptionEntry::Unknown(UnknownEntry { span, raw: token.to_string() });
+            return OptionEntry::Unknown(UnknownEntry {
+                span,
+                raw: token.to_string(),
+            });
         }
 
         let Some(key_bounds) = trim_local_bounds(key_raw) else {
-            return OptionEntry::Unknown(UnknownEntry { span, raw: token.to_string() });
+            return OptionEntry::Unknown(UnknownEntry {
+                span,
+                raw: token.to_string(),
+            });
         };
         let value_bounds = trim_local_bounds(value_raw_untrimmed);
         let key_span = Span::new(token_from + key_bounds.0, token_from + key_bounds.1);
-        let value_span = value_bounds
-            .map(|b| Span::new(token_from + separator + 1 + b.0, token_from + separator + 1 + b.1));
+        let value_span = value_bounds.map(|b| {
+            Span::new(
+                token_from + separator + 1 + b.0,
+                token_from + separator + 1 + b.1,
+            )
+        });
 
         return OptionEntry::KV(KvEntry {
             key,
@@ -40,7 +50,10 @@ pub(crate) fn classify_option_token(token: &str, token_from: usize) -> OptionEnt
         });
     }
 
-    if is_flag_shape(token) || looks_like_arrow_specification(token) || looks_like_color_specification(token) {
+    if is_flag_shape(token)
+        || looks_like_arrow_specification(token)
+        || looks_like_color_specification(token)
+    {
         return OptionEntry::Flag(FlagEntry {
             key: token.trim().to_lowercase(),
             span,
@@ -49,7 +62,10 @@ pub(crate) fn classify_option_token(token: &str, token_from: usize) -> OptionEnt
         });
     }
 
-    OptionEntry::Unknown(UnknownEntry { span, raw: token.to_string() })
+    OptionEntry::Unknown(UnknownEntry {
+        span,
+        raw: token.to_string(),
+    })
 }
 
 fn is_flag_shape(token: &str) -> bool {
@@ -74,7 +90,9 @@ fn looks_like_arrow_specification(token: &str) -> bool {
         return false;
     }
     let bytes = trimmed.as_bytes();
-    let has_arrow_syntax = bytes.iter().any(|&b| matches!(b, b'<' | b'>' | b'|' | b'{' | b'}' | b'[' | b']'));
+    let has_arrow_syntax = bytes
+        .iter()
+        .any(|&b| matches!(b, b'<' | b'>' | b'|' | b'{' | b'}' | b'[' | b']'));
     let has_known_arrow_name = contains_known_arrow_name(trimmed);
     if !has_arrow_syntax && !has_known_arrow_name {
         return false;
@@ -82,7 +100,24 @@ fn looks_like_arrow_specification(token: &str) -> bool {
     // ^[A-Za-z0-9<>|{}[\].'=,:!# -]+$
     bytes.iter().all(|&b| {
         b.is_ascii_alphanumeric()
-            || matches!(b, b'<' | b'>' | b'|' | b'{' | b'}' | b'[' | b']' | b'.' | b'\'' | b'=' | b',' | b':' | b'!' | b'#' | b' ' | b'-')
+            || matches!(
+                b,
+                b'<' | b'>'
+                    | b'|'
+                    | b'{'
+                    | b'}'
+                    | b'['
+                    | b']'
+                    | b'.'
+                    | b'\''
+                    | b'='
+                    | b','
+                    | b':'
+                    | b'!'
+                    | b'#'
+                    | b' '
+                    | b'-'
+            )
     })
 }
 
@@ -96,9 +131,24 @@ fn contains_known_arrow_name(trimmed: &str) -> bool {
     // Single words from the legacy alternation regex, matched with word
     // boundaries; multiword names (`arc barb` etc.) allow any whitespace run.
     const WORDS: [&str; 18] = [
-        "stealth", "latex", "triangle", "bar", "hooks", "to", "implies", "rightarrow",
-        "kite", "square", "circle", "rays", "bracket", "parenthesis", "diamond",
-        "rectangle", "ellipse", "cap",
+        "stealth",
+        "latex",
+        "triangle",
+        "bar",
+        "hooks",
+        "to",
+        "implies",
+        "rightarrow",
+        "kite",
+        "square",
+        "circle",
+        "rays",
+        "bracket",
+        "parenthesis",
+        "diamond",
+        "rectangle",
+        "ellipse",
+        "cap",
     ];
     for name in WORDS {
         if word_boundary_contains(&lower, name) {
@@ -129,7 +179,10 @@ fn multiword_arrow_match(lower: &str, first: &str) -> bool {
         }
         if before_ok && ws > after && lower[ws..].starts_with("barb") {
             let after_ok = ws + "barb".len() >= lower.len()
-                || !bytes.get(ws + "barb".len()).copied().is_some_and(is_js_word_byte);
+                || !bytes
+                    .get(ws + "barb".len())
+                    .copied()
+                    .is_some_and(is_js_word_byte);
             if after_ok {
                 return true;
             }
@@ -263,6 +316,9 @@ mod option_classify_unit_tests {
 
     #[test]
     fn unknown_when_no_shape() {
-        assert!(matches!(classify_option_token("$1+2$", 0), OptionEntry::Unknown(_)));
+        assert!(matches!(
+            classify_option_token("$1+2$", 0),
+            OptionEntry::Unknown(_)
+        ));
     }
 }

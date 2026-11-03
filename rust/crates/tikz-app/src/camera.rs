@@ -39,7 +39,10 @@ pub struct Camera {
 
 impl Default for Camera {
     fn default() -> Self {
-        Self { center: Vec2::new(0.0, 0.0), zoom: 6.0 }
+        Self {
+            center: Vec2::new(0.0, 0.0),
+            zoom: 6.0,
+        }
     }
 }
 
@@ -114,7 +117,9 @@ impl Camera {
         let usable_h = (rect.height() - 2.0 * FIT_PADDING).max(1.0) as f64;
         let span_x = (hi.x - lo.x).max(1e-6);
         let span_y = (hi.y - lo.y).max(1e-6);
-        self.zoom = (usable_w / span_x).min(usable_h / span_y).clamp(MIN_ZOOM, MAX_ZOOM);
+        self.zoom = (usable_w / span_x)
+            .min(usable_h / span_y)
+            .clamp(MIN_ZOOM, MAX_ZOOM);
     }
 }
 
@@ -129,9 +134,13 @@ mod tests {
 
     #[test]
     fn roundtrip_is_exact_enough_for_picking() {
-        let camera = Camera { center: Vec2::new(-3.5, 7.25), zoom: 11.75 };
+        let camera = Camera {
+            center: Vec2::new(-3.5, 7.25),
+            zoom: 11.75,
+        };
         for (x, y) in [(0.0, 0.0), (100.0, -50.0), (-12.5, 3.0)] {
-            let back = camera.screen_to_world(camera.world_to_screen(Vec2::new(x, y), rect()), rect());
+            let back =
+                camera.screen_to_world(camera.world_to_screen(Vec2::new(x, y), rect()), rect());
             assert!((back.x - x).abs() < 1e-6, "{back:?}");
             assert!((back.y - y).abs() < 1e-6, "{back:?}");
         }

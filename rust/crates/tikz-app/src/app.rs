@@ -40,11 +40,17 @@ struct Notice {
 
 impl Notice {
     fn ok(text: impl Into<String>) -> Self {
-        Self { text: text.into(), error: false }
+        Self {
+            text: text.into(),
+            error: false,
+        }
     }
 
     fn error(text: impl Into<String>) -> Self {
-        Self { text: text.into(), error: true }
+        Self {
+            text: text.into(),
+            error: true,
+        }
     }
 }
 
@@ -78,8 +84,10 @@ impl TikzApp {
             },
             None => (Document::template(), None),
         };
-        let path_input =
-            doc.path.as_ref().map_or_else(String::new, |p| p.display().to_string());
+        let path_input = doc
+            .path
+            .as_ref()
+            .map_or_else(String::new, |p| p.display().to_string());
         Self {
             doc,
             camera: Camera::default(),
@@ -106,7 +114,10 @@ impl TikzApp {
     fn open_path(&mut self, path: PathBuf) {
         match Document::open(&path) {
             Ok(doc) => {
-                self.path_input = doc.path.as_ref().map_or_else(String::new, |p| p.display().to_string());
+                self.path_input = doc
+                    .path
+                    .as_ref()
+                    .map_or_else(String::new, |p| p.display().to_string());
                 self.doc = doc;
                 self.selection = None;
                 self.needs_fit = true;
@@ -219,160 +230,207 @@ impl TikzApp {
             ui.label(RichText::new(format!("{} lines", self.doc.line_count())).weak());
         });
         ui.separator();
-        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-            let width = ui.available_width().max(320.0);
-            let response = ui.add(
-                egui::TextEdit::multiline(&mut self.doc.source)
-                    .code_editor()
-                    .desired_width(width)
-                    .desired_rows(36),
-            );
-            if response.changed() {
-                self.doc.modified = true;
-            }
-        });
+        egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let width = ui.available_width().max(320.0);
+                let response = ui.add(
+                    egui::TextEdit::multiline(&mut self.doc.source)
+                        .code_editor()
+                        .desired_width(width)
+                        .desired_rows(36),
+                );
+                if response.changed() {
+                    self.doc.modified = true;
+                }
+            });
     }
 
     fn inspector_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.heading("Inspector");
         ui.separator();
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            egui::Grid::new("document_grid").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
-                ui.label("File");
-                ui.label(self.doc.display_name());
-                ui.end_row();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Grid::new("document_grid")
+                    .num_columns(2)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("File");
+                        ui.label(self.doc.display_name());
+                        ui.end_row();
 
-                ui.label("Lines");
-                ui.label(self.doc.line_count().to_string());
-                ui.end_row();
+                        ui.label("Lines");
+                        ui.label(self.doc.line_count().to_string());
+                        ui.end_row();
 
-                ui.label("Elements");
-                let elements = self.doc.scene.as_ref().map_or(0, |scene| scene.len());
-                ui.label(elements.to_string());
-                ui.end_row();
+                        ui.label("Elements");
+                        let elements = self.doc.scene.as_ref().map_or(0, |scene| scene.len());
+                        ui.label(elements.to_string());
+                        ui.end_row();
 
-                ui.label("Errors");
-                let color = if self.doc.diagnostics.is_empty() { OK } else { ERROR };
-                ui.label(RichText::new(self.doc.diagnostics.len().to_string()).color(color));
-                ui.end_row();
-
-                ui.label("Warnings");
-                let color = if self.doc.warnings.is_empty() { OK } else { WARN };
-                ui.label(RichText::new(self.doc.warnings.len().to_string()).color(color));
-                ui.end_row();
-
-                ui.label("Bounds");
-                let bounds = self.doc.scene.as_ref().and_then(|scene| scene.bounds());
-                ui.label(bounds.map_or_else(
-                    || "—".to_string(),
-                    |(lo, hi)| format!("{:.2} × {:.2} pt", hi.x - lo.x, hi.y - lo.y),
-                ));
-                ui.end_row();
-
-                ui.label("Cursor");
-                ui.label(
-                    self.cursor_world
-                        .map_or_else(|| "—".to_string(), |p| format!("{:.2}, {:.2} pt", p.x, p.y)),
-                );
-                ui.end_row();
-            });
-
-            ui.add_space(8.0);
-            if ui.button("Copy SVG").clicked() {
-                match tikz_core::render::render_tex_with_warnings(&self.doc.source) {
-                    Ok(rendered) => {
-                        ctx.copy_text(rendered.svg);
-                        let suffix = if rendered.warnings.is_empty() {
-                            String::new()
+                        ui.label("Errors");
+                        let color = if self.doc.diagnostics.is_empty() {
+                            OK
                         } else {
-                            format!(" ({} warning(s))", rendered.warnings.len())
+                            ERROR
                         };
-                        self.notice = Some(Notice::ok(format!("SVG copied to clipboard{suffix}")));
-                    }
-                    Err(errors) => {
-                        self.notice = Some(Notice::error(format!(
-                            "cannot copy SVG: {} error(s)",
-                            errors.len()
-                        )));
-                    }
-                }
-            }
-
-            ui.separator();
-            ui.label(RichText::new("Selection").strong());
-            match self.selection.and_then(|index| {
-                self.doc.scene.as_ref().and_then(|scene| scene.elements.get(index)).map(|element| (index, element))
-            }) {
-                Some((index, element)) => {
-                    egui::Grid::new("selection_grid").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
-                        ui.label("Index");
-                        ui.label(index.to_string());
+                        ui.label(
+                            RichText::new(self.doc.diagnostics.len().to_string()).color(color),
+                        );
                         ui.end_row();
 
-                        ui.label("Kind");
-                        ui.label(element_kind(element));
+                        ui.label("Warnings");
+                        let color = if self.doc.warnings.is_empty() {
+                            OK
+                        } else {
+                            WARN
+                        };
+                        ui.label(RichText::new(self.doc.warnings.len().to_string()).color(color));
                         ui.end_row();
 
-                        ui.label("Source id");
-                        ui.label(RichText::new(element.source_id()).monospace());
+                        ui.label("Bounds");
+                        let bounds = self.doc.scene.as_ref().and_then(|scene| scene.bounds());
+                        ui.label(bounds.map_or_else(
+                            || "—".to_string(),
+                            |(lo, hi)| format!("{:.2} × {:.2} pt", hi.x - lo.x, hi.y - lo.y),
+                        ));
                         ui.end_row();
 
-                        ui.label("Stroke");
-                        let style = element.style();
-                        ui.label(RichText::new(format!(
-                            "{} / {:.2} pt",
-                            style.stroke.as_attr(),
-                            style.stroke_width
-                        ))
-                        .monospace());
-                        ui.end_row();
-
-                        ui.label("Fill");
-                        ui.label(RichText::new(element.style().fill.as_attr()).monospace());
-                        ui.end_row();
-
-                        ui.label("Dash");
-                        ui.label(match &style.dash {
-                            None => "solid".to_string(),
-                            Some(values) => values
-                                .iter()
-                                .map(|value| format!("{value:.2}"))
-                                .collect::<Vec<_>>()
-                                .join(" "),
-                        });
-                        ui.end_row();
-
-                        ui.label("Hovered");
-                        ui.label(if self.hovered == Some(index) { "yes" } else { "no" });
+                        ui.label("Cursor");
+                        ui.label(self.cursor_world.map_or_else(
+                            || "—".to_string(),
+                            |p| format!("{:.2}, {:.2} pt", p.x, p.y),
+                        ));
                         ui.end_row();
                     });
-                    if ui.button("Deselect").clicked() {
-                        self.selection = None;
+
+                ui.add_space(8.0);
+                if ui.button("Copy SVG").clicked() {
+                    match tikz_core::render::render_tex_with_warnings(&self.doc.source) {
+                        Ok(rendered) => {
+                            ctx.copy_text(rendered.svg);
+                            let suffix = if rendered.warnings.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" ({} warning(s))", rendered.warnings.len())
+                            };
+                            self.notice =
+                                Some(Notice::ok(format!("SVG copied to clipboard{suffix}")));
+                        }
+                        Err(errors) => {
+                            self.notice = Some(Notice::error(format!(
+                                "cannot copy SVG: {} error(s)",
+                                errors.len()
+                            )));
+                        }
                     }
                 }
-                None => {
-                    ui.label(RichText::new("Click a path on the canvas to inspect it.").weak());
-                }
-            }
 
-            let hovered = self.hovered.and_then(|index| {
-                self.doc.scene.as_ref().and_then(|scene| scene.elements.get(index))
+                ui.separator();
+                ui.label(RichText::new("Selection").strong());
+                match self.selection.and_then(|index| {
+                    self.doc
+                        .scene
+                        .as_ref()
+                        .and_then(|scene| scene.elements.get(index))
+                        .map(|element| (index, element))
+                }) {
+                    Some((index, element)) => {
+                        egui::Grid::new("selection_grid")
+                            .num_columns(2)
+                            .spacing([12.0, 4.0])
+                            .show(ui, |ui| {
+                                ui.label("Index");
+                                ui.label(index.to_string());
+                                ui.end_row();
+
+                                ui.label("Kind");
+                                ui.label(element_kind(element));
+                                ui.end_row();
+
+                                ui.label("Source id");
+                                ui.label(RichText::new(element.source_id()).monospace());
+                                ui.end_row();
+
+                                ui.label("Stroke");
+                                let style = element.style();
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} / {:.2} pt",
+                                        style.stroke.as_attr(),
+                                        style.stroke_width
+                                    ))
+                                    .monospace(),
+                                );
+                                ui.end_row();
+
+                                ui.label("Fill");
+                                ui.label(RichText::new(element.style().fill.as_attr()).monospace());
+                                ui.end_row();
+
+                                ui.label("Dash");
+                                ui.label(match &style.dash {
+                                    None => "solid".to_string(),
+                                    Some(values) => values
+                                        .iter()
+                                        .map(|value| format!("{value:.2}"))
+                                        .collect::<Vec<_>>()
+                                        .join(" "),
+                                });
+                                ui.end_row();
+
+                                ui.label("Hovered");
+                                ui.label(if self.hovered == Some(index) {
+                                    "yes"
+                                } else {
+                                    "no"
+                                });
+                                ui.end_row();
+                            });
+                        if ui.button("Deselect").clicked() {
+                            self.selection = None;
+                        }
+                    }
+                    None => {
+                        ui.label(RichText::new("Click a path on the canvas to inspect it.").weak());
+                    }
+                }
+
+                let hovered = self.hovered.and_then(|index| {
+                    self.doc
+                        .scene
+                        .as_ref()
+                        .and_then(|scene| scene.elements.get(index))
+                });
+                if let Some(element) = hovered {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Under pointer").weak());
+                    ui.label(RichText::new(element.source_id()).monospace());
+                }
             });
-            if let Some(element) = hovered {
-                ui.add_space(8.0);
-                ui.label(RichText::new("Under pointer").weak());
-                ui.label(RichText::new(element.source_id()).monospace());
-            }
-        });
     }
 
     fn diagnostics_panel(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.heading("Diagnostics");
-            let error_color = if self.doc.diagnostics.is_empty() { OK } else { ERROR };
-            ui.label(RichText::new(format!("{} error(s)", self.doc.diagnostics.len())).color(error_color));
-            let warn_color = if self.doc.warnings.is_empty() { OK } else { WARN };
-            ui.label(RichText::new(format!("{} warning(s)", self.doc.warnings.len())).color(warn_color));
+            let error_color = if self.doc.diagnostics.is_empty() {
+                OK
+            } else {
+                ERROR
+            };
+            ui.label(
+                RichText::new(format!("{} error(s)", self.doc.diagnostics.len()))
+                    .color(error_color),
+            );
+            let warn_color = if self.doc.warnings.is_empty() {
+                OK
+            } else {
+                WARN
+            };
+            ui.label(
+                RichText::new(format!("{} warning(s)", self.doc.warnings.len())).color(warn_color),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(notice) = &self.notice {
                     let color = if notice.error { ERROR } else { OK };
@@ -382,27 +440,32 @@ impl TikzApp {
         });
         ui.separator();
         if self.doc.diagnostics.is_empty() && self.doc.warnings.is_empty() {
-            ui.label(RichText::new("No diagnostics. Unsupported TikZ is reported here, never dropped.").weak());
+            ui.label(
+                RichText::new("No diagnostics. Unsupported TikZ is reported here, never dropped.")
+                    .weak(),
+            );
             return;
         }
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            for diagnostic in &self.doc.diagnostics {
-                let (line, col) = diagnostic.line_col(&self.doc.source);
-                ui.label(
-                    RichText::new(format!("{line}:{col}  error: {}", diagnostic.message))
-                        .monospace()
-                        .color(ERROR),
-                );
-            }
-            for warning in &self.doc.warnings {
-                let (line, col) = warning.line_col(&self.doc.source);
-                ui.label(
-                    RichText::new(format!("{line}:{col}  warning: {}", warning.message))
-                        .monospace()
-                        .color(WARN),
-                );
-            }
-        });
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for diagnostic in &self.doc.diagnostics {
+                    let (line, col) = diagnostic.line_col(&self.doc.source);
+                    ui.label(
+                        RichText::new(format!("{line}:{col}  error: {}", diagnostic.message))
+                            .monospace()
+                            .color(ERROR),
+                    );
+                }
+                for warning in &self.doc.warnings {
+                    let (line, col) = warning.line_col(&self.doc.source);
+                    ui.label(
+                        RichText::new(format!("{line}:{col}  warning: {}", warning.message))
+                            .monospace()
+                            .color(WARN),
+                    );
+                }
+            });
     }
 
     fn central_panel(&mut self, ui: &mut egui::Ui) {

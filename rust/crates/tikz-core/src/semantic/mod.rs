@@ -36,7 +36,12 @@ pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
     let figures = scan_tikz_figures(source);
     let figure = match figures.as_slice() {
         [one] => one,
-        [] => return Err(vec![Issue::error(Span::new(0, source.len()), "no tikzpicture found")]),
+        [] => {
+            return Err(vec![Issue::error(
+                Span::new(0, source.len()),
+                "no tikzpicture found",
+            )])
+        }
         [_, second, ..] => {
             return Err(vec![Issue::error(
                 second.span,
@@ -51,7 +56,10 @@ pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
     let mut figure_state = StyleState::default();
     if source[cursor..end].starts_with('[') {
         let Some(close) = matching(source, cursor, end, b'[', b']') else {
-            return Err(vec![Issue::error(Span::new(cursor, end), "unterminated figure options")]);
+            return Err(vec![Issue::error(
+                Span::new(cursor, end),
+                "unterminated figure options",
+            )]);
         };
         let list = parse_option_list_raw(&source[cursor..=close], cursor);
         figure_state.apply(&list, &mut issues);
@@ -59,7 +67,10 @@ pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
     }
 
     let mut scene = Scene::default();
-    for (index, (from, to, terminated)) in split_statements(source, cursor, end).into_iter().enumerate() {
+    for (index, (from, to, terminated)) in split_statements(source, cursor, end)
+        .into_iter()
+        .enumerate()
+    {
         if !terminated {
             issues.push(Issue::error(
                 Span::new(from, to),
@@ -67,7 +78,15 @@ pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
             ));
             continue;
         }
-        compile_statement(source, &figure_state, index, from, to, &mut scene, &mut issues);
+        compile_statement(
+            source,
+            &figure_state,
+            index,
+            from,
+            to,
+            &mut scene,
+            &mut issues,
+        );
     }
 
     if issues.iter().any(|issue| issue.severity == Severity::Error) {
@@ -121,15 +140,24 @@ fn compile_statement(
     let mut cursor = skip_trivia(source, after, to);
     if source[cursor..to].starts_with('[') {
         let Some(close) = matching(source, cursor, to, b'[', b']') else {
-            issues.push(Issue::error(Span::new(cursor, to), "unterminated option list"));
+            issues.push(Issue::error(
+                Span::new(cursor, to),
+                "unterminated option list",
+            ));
             return;
         };
         let list = parse_option_list_raw(&source[cursor..=close], cursor);
         state.apply(&list, issues);
         cursor = close + 1;
     }
-    let mut ctx = PathContext { source, source_id: path_statement_id(index), state };
-    scene.elements.extend(pathbuild::build_path(&mut ctx, cursor, to, issues));
+    let mut ctx = PathContext {
+        source,
+        source_id: path_statement_id(index),
+        state,
+    };
+    scene
+        .elements
+        .extend(pathbuild::build_path(&mut ctx, cursor, to, issues));
 }
 
 /// `\fill` with no colour paints the current colour; the port's base stroke
@@ -245,16 +273,18 @@ mod tests {
 
     #[test]
     fn figure_options_transform_coordinates() {
-        let (scene, issues) = scene_of(
-            "\\begin{tikzpicture}[scale=0.6]\\draw (0,0) -- (1,1);\\end{tikzpicture}",
-        );
+        let (scene, issues) =
+            scene_of("\\begin{tikzpicture}[scale=0.6]\\draw (0,0) -- (1,1);\\end{tikzpicture}");
         assert!(issues.is_empty(), "{issues:?}");
         let path = only_path(&scene);
         assert_eq!(
             path.cmds,
             vec![
                 PathCmd::Move(crate::units::Vec2::new(0.0, 0.0)),
-                PathCmd::Line(crate::units::Vec2::new(0.6 * crate::units::CM_TO_PT, 0.6 * crate::units::CM_TO_PT)),
+                PathCmd::Line(crate::units::Vec2::new(
+                    0.6 * crate::units::CM_TO_PT,
+                    0.6 * crate::units::CM_TO_PT
+                )),
             ]
         );
     }
@@ -272,9 +302,8 @@ mod tests {
 
     #[test]
     fn grid_expands_to_one_line_element_per_axis_step() {
-        let (scene, issues) = scene_of(
-            "\\begin{tikzpicture}\\draw (0,0) grid (2,2);\\end{tikzpicture}",
-        );
+        let (scene, issues) =
+            scene_of("\\begin{tikzpicture}\\draw (0,0) grid (2,2);\\end{tikzpicture}");
         assert!(issues.is_empty(), "{issues:?}");
         // x = 0,1,2 vertical then y = 0,1,2 horizontal.
         assert_eq!(scene.len(), 6);

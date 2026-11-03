@@ -21,7 +21,7 @@
 //! assert_eq!(hit_test(&scene, Vec2::new(5.0, 2.0), 0.0), None);
 //! ```
 
-use crate::scene::{PathCmd, Scene, SceneEllipse, SceneElement, ScenePath};
+use crate::scene::{PathCmd, Scene, SceneElement, SceneEllipse, ScenePath};
 use crate::units::Vec2;
 
 /// Samples per cubic segment when flattening for picking.
@@ -99,11 +99,21 @@ pub fn flatten(cmds: &[PathCmd]) -> Vec<Vec<Vec2>> {
                 subpaths.last_mut().expect("subpath exists").extend(samples);
                 cursor = Some(to);
             }
-            PathCmd::Arc { rx, ry, rotation, large, sweep, to } => {
+            PathCmd::Arc {
+                rx,
+                ry,
+                rotation,
+                large,
+                sweep,
+                to,
+            } => {
                 let from = cursor.unwrap_or(to);
                 let points = arc_points(from, rx, ry, rotation, large, sweep, to);
                 ensure_subpath(&mut subpaths, from);
-                subpaths.last_mut().expect("subpath exists").extend(points.into_iter().skip(1));
+                subpaths
+                    .last_mut()
+                    .expect("subpath exists")
+                    .extend(points.into_iter().skip(1));
                 cursor = Some(to);
             }
             PathCmd::Close => {
@@ -138,7 +148,15 @@ fn cubic_point(a: Vec2, b: Vec2, c: Vec2, d: Vec2, t: f64) -> Vec2 {
 ///
 /// Canvas space has y up while SVG arcs are defined with y down, so the
 /// sweep flag is inverted here.
-fn arc_points(from: Vec2, rx: f64, ry: f64, rotation: f64, large: bool, sweep: bool, to: Vec2) -> Vec<Vec2> {
+fn arc_points(
+    from: Vec2,
+    rx: f64,
+    ry: f64,
+    rotation: f64,
+    large: bool,
+    sweep: bool,
+    to: Vec2,
+) -> Vec<Vec2> {
     let sweep = !sweep;
     let (mut rx, mut ry) = (rx.abs(), ry.abs());
     if rx <= f64::EPSILON || ry <= f64::EPSILON {
@@ -220,7 +238,10 @@ pub fn ellipse_points(ellipse: &SceneEllipse) -> Vec<Vec2> {
         .map(|index| {
             let theta = std::f64::consts::TAU * (index as f64 / ELLIPSE_SAMPLES as f64);
             let (sin_t, cos_t) = theta.sin_cos();
-            Vec2::new(ellipse.center.x + ellipse.rx * cos_t, ellipse.center.y + ellipse.ry * sin_t)
+            Vec2::new(
+                ellipse.center.x + ellipse.rx * cos_t,
+                ellipse.center.y + ellipse.ry * sin_t,
+            )
         })
         .collect()
 }
@@ -289,14 +310,19 @@ pub fn distance_to_ellipse(p: Vec2, ellipse: &SceneEllipse) -> f64 {
 /// assert_eq!(hit_test(&scene, Vec2::new(0.0, 2.5), 0.0), Some(1));
 /// ```
 pub fn hit_test(scene: &Scene, point: Vec2, tolerance: f64) -> Option<usize> {
-    scene.elements.iter().enumerate().rev().find_map(|(index, element)| {
-        let style = element.style();
-        if style.stroke == crate::scene::Paint::None {
-            return None;
-        }
-        let distance = distance_to_element(point, element);
-        (distance <= style.stroke_width / 2.0 + tolerance).then_some(index)
-    })
+    scene
+        .elements
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(index, element)| {
+            let style = element.style();
+            if style.stroke == crate::scene::Paint::None {
+                return None;
+            }
+            let distance = distance_to_element(point, element);
+            (distance <= style.stroke_width / 2.0 + tolerance).then_some(index)
+        })
 }
 
 #[cfg(test)]
@@ -308,7 +334,10 @@ mod tests {
         SceneElement::Path(ScenePath {
             source_id: "path:0".into(),
             cmds,
-            style: PathStyle { stroke_width: width, ..PathStyle::default() },
+            style: PathStyle {
+                stroke_width: width,
+                ..PathStyle::default()
+            },
             bbox: None,
         })
     }
@@ -340,8 +369,22 @@ mod tests {
         let cmds = vec![
             PathCmd::Move(Vec2::new(0.0, 0.0)),
             PathCmd::Move(Vec2::new(radius, 0.0)),
-            PathCmd::Arc { rx: radius, ry: radius, rotation: 0.0, large: false, sweep: false, to: Vec2::new(-radius, 0.0) },
-            PathCmd::Arc { rx: radius, ry: radius, rotation: 0.0, large: false, sweep: false, to: Vec2::new(radius, 0.0) },
+            PathCmd::Arc {
+                rx: radius,
+                ry: radius,
+                rotation: 0.0,
+                large: false,
+                sweep: false,
+                to: Vec2::new(-radius, 0.0),
+            },
+            PathCmd::Arc {
+                rx: radius,
+                ry: radius,
+                rotation: 0.0,
+                large: false,
+                sweep: false,
+                to: Vec2::new(radius, 0.0),
+            },
             PathCmd::Close,
         ];
         let points: Vec<Vec2> = flatten(&cmds).into_iter().flatten().collect();
@@ -352,14 +395,20 @@ mod tests {
             assert!((r - radius).abs() < 1e-9 || r < 1e-9, "{point:?} at r={r}");
         }
         assert!(points.iter().any(|p| p.y > radius - 1e-6), "no top sample");
-        assert!(points.iter().any(|p| p.y < -radius + 1e-6), "no bottom sample");
+        assert!(
+            points.iter().any(|p| p.y < -radius + 1e-6),
+            "no bottom sample"
+        );
     }
 
     #[test]
     fn stroke_width_and_tolerance_widen_the_pick_radius() {
         let scene = Scene {
             elements: vec![path(
-                vec![PathCmd::Move(Vec2::new(0.0, 0.0)), PathCmd::Line(Vec2::new(0.0, 10.0))],
+                vec![
+                    PathCmd::Move(Vec2::new(0.0, 0.0)),
+                    PathCmd::Line(Vec2::new(0.0, 10.0)),
+                ],
                 2.0,
             )],
         };
@@ -372,13 +421,25 @@ mod tests {
     fn later_elements_win_and_strokeless_ones_are_skipped() {
         let invisible = SceneElement::Path(ScenePath {
             source_id: "path:1".into(),
-            cmds: vec![PathCmd::Move(Vec2::new(0.0, 0.0)), PathCmd::Line(Vec2::new(0.0, 10.0))],
-            style: PathStyle { stroke: Paint::None, ..PathStyle::default() },
+            cmds: vec![
+                PathCmd::Move(Vec2::new(0.0, 0.0)),
+                PathCmd::Line(Vec2::new(0.0, 10.0)),
+            ],
+            style: PathStyle {
+                stroke: Paint::None,
+                ..PathStyle::default()
+            },
             bbox: None,
         });
         let scene = Scene {
             elements: vec![
-                path(vec![PathCmd::Move(Vec2::new(0.0, 0.0)), PathCmd::Line(Vec2::new(0.0, 10.0))], 0.4),
+                path(
+                    vec![
+                        PathCmd::Move(Vec2::new(0.0, 0.0)),
+                        PathCmd::Line(Vec2::new(0.0, 10.0)),
+                    ],
+                    0.4,
+                ),
                 invisible,
             ],
         };
@@ -402,6 +463,9 @@ mod tests {
 
     #[test]
     fn empty_scene_never_hits() {
-        assert_eq!(hit_test(&Scene::default(), Vec2::new(0.0, 0.0), 100.0), None);
+        assert_eq!(
+            hit_test(&Scene::default(), Vec2::new(0.0, 0.0), 100.0),
+            None
+        );
     }
 }

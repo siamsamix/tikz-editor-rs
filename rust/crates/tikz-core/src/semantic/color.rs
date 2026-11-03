@@ -51,7 +51,10 @@ pub fn is_named(name: &str) -> bool {
 }
 
 fn lookup(name: &str) -> Option<(u8, u8, u8)> {
-    NAMED.iter().find(|(key, _)| *key == name).map(|(_, rgb)| *rgb)
+    NAMED
+        .iter()
+        .find(|(key, _)| *key == name)
+        .map(|(_, rgb)| *rgb)
 }
 
 /// Resolve one colour expression (`none`, name, hex, or mix).
@@ -67,8 +70,7 @@ pub fn resolve_color(raw: &str) -> Result<Paint, String> {
         return Ok(Paint::Rgb(rgb.0, rgb.1, rgb.2));
     }
     let parts: Vec<&str> = text.split('!').collect();
-    let base = lookup(parts[0])
-        .ok_or_else(|| format!("unknown colour `{}`", parts[0].trim()))?;
+    let base = lookup(parts[0]).ok_or_else(|| format!("unknown colour `{}`", parts[0].trim()))?;
     if parts.len() == 1 {
         return Ok(Paint::Rgb(base.0, base.1, base.2));
     }
@@ -76,7 +78,11 @@ pub fn resolve_color(raw: &str) -> Result<Paint, String> {
         .trim()
         .parse()
         .map_err(|_| format!("invalid colour percentage `{}`", parts[1].trim()))?;
-    let second = match parts.get(2).map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    let second = match parts
+        .get(2)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         None => (0xff, 0xff, 0xff),
         Some(name) => lookup(name).ok_or_else(|| format!("unknown colour `{name}`"))?,
     };
@@ -90,7 +96,9 @@ pub fn resolve_color(raw: &str) -> Result<Paint, String> {
 
 /// Linear channel mix, rounded the way the legacy `rgbToHex` rounds.
 fn mix(first: u8, second: u8, ratio: f64) -> u8 {
-    (f64::from(first) * ratio + f64::from(second) * (1.0 - ratio)).round().clamp(0.0, 255.0) as u8
+    (f64::from(first) * ratio + f64::from(second) * (1.0 - ratio))
+        .round()
+        .clamp(0.0, 255.0) as u8
 }
 
 /// Parse `#rgb` / `#rrggbb`.
@@ -118,30 +126,53 @@ mod tests {
 
     #[test]
     fn named_colors_match_the_legacy_table() {
-        assert_eq!(resolve_color(" Purple ").unwrap(), Paint::Rgb(0xbf, 0x00, 0x40));
+        assert_eq!(
+            resolve_color(" Purple ").unwrap(),
+            Paint::Rgb(0xbf, 0x00, 0x40)
+        );
         assert_eq!(resolve_color("lime").unwrap(), Paint::Rgb(0xbf, 0xff, 0x00));
-        assert_eq!(resolve_color("orange").unwrap(), Paint::Rgb(0xff, 0x80, 0x00));
+        assert_eq!(
+            resolve_color("orange").unwrap(),
+            Paint::Rgb(0xff, 0x80, 0x00)
+        );
     }
 
     #[test]
     fn mixes_apply_the_ratio_to_the_first_color() {
         // 20% blue + 80% white: the ratio applies to the first colour.
-        assert_eq!(resolve_color("blue!20").unwrap(), Paint::Rgb(0xcc, 0xcc, 0xff));
-        assert_eq!(resolve_color("green!60!black").unwrap(), Paint::Rgb(0x00, 0x99, 0x00));
-        assert_eq!(resolve_color("black!0").unwrap(), Paint::Rgb(0xff, 0xff, 0xff));
-        assert_eq!(resolve_color("red!100").unwrap(), Paint::Rgb(0xff, 0x00, 0x00));
+        assert_eq!(
+            resolve_color("blue!20").unwrap(),
+            Paint::Rgb(0xcc, 0xcc, 0xff)
+        );
+        assert_eq!(
+            resolve_color("green!60!black").unwrap(),
+            Paint::Rgb(0x00, 0x99, 0x00)
+        );
+        assert_eq!(
+            resolve_color("black!0").unwrap(),
+            Paint::Rgb(0xff, 0xff, 0xff)
+        );
+        assert_eq!(
+            resolve_color("red!100").unwrap(),
+            Paint::Rgb(0xff, 0x00, 0x00)
+        );
     }
 
     #[test]
     fn hex_forms_and_none() {
         assert_eq!(resolve_color("#fff").unwrap(), Paint::Rgb(0xff, 0xff, 0xff));
-        assert_eq!(resolve_color("#bf0040").unwrap(), Paint::Rgb(0xbf, 0x00, 0x40));
+        assert_eq!(
+            resolve_color("#bf0040").unwrap(),
+            Paint::Rgb(0xbf, 0x00, 0x40)
+        );
         assert_eq!(resolve_color("none").unwrap(), Paint::None);
     }
 
     #[test]
     fn unknown_colors_are_errors_not_panics() {
-        assert!(resolve_color("tealish").unwrap_err().contains("unknown colour"));
+        assert!(resolve_color("tealish")
+            .unwrap_err()
+            .contains("unknown colour"));
         assert!(resolve_color("blue!x").is_err());
         assert!(resolve_color("").is_err());
         assert!(resolve_color("green!50!notacolor").is_err());

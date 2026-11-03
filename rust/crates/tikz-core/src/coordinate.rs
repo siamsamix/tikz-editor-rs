@@ -14,8 +14,8 @@
 //! assert_eq!(polar.y, "2cm");
 //! ```
 
-use crate::split::split_top_level_with_ranges;
 use crate::span::Span;
+use crate::split::split_top_level_with_ranges;
 
 /// Coordinate syntax form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,7 +93,10 @@ pub fn parse_coordinate(raw: &str) -> ParsedCoordinate {
     }
 
     let options_span = extracted.options_raw.as_ref().map(|r| {
-        Span::new(1 + extracted.options_offset, 1 + extracted.options_offset + r.len())
+        Span::new(
+            1 + extracted.options_offset,
+            1 + extracted.options_offset + r.len(),
+        )
     });
 
     if is_calc_coordinate(&core) {
@@ -236,7 +239,13 @@ fn matches_intersection_prefix(lower: &str) -> bool {
 fn lowercase_ascii(value: &str) -> String {
     value
         .chars()
-        .map(|c| if c.is_ascii() { c.to_ascii_lowercase() } else { c })
+        .map(|c| {
+            if c.is_ascii() {
+                c.to_ascii_lowercase()
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
@@ -248,7 +257,10 @@ struct ExtractedOptions {
 
 fn extract_leading_coordinate_options(inner: &str) -> ExtractedOptions {
     let bytes = inner.as_bytes();
-    let offset = bytes.iter().take_while(|&&b| b.is_ascii_whitespace()).count();
+    let offset = bytes
+        .iter()
+        .take_while(|&&b| b.is_ascii_whitespace())
+        .count();
     if bytes.get(offset) != Some(&b'[') {
         return ExtractedOptions {
             options_raw: None,

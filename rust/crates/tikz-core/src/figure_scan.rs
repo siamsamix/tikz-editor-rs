@@ -65,7 +65,8 @@ pub fn scan_tikz_figures(source: &str) -> Vec<ScannedFigure> {
             cursor = verbatim_end;
             continue;
         }
-        let Some(environment) = read_tex_environment_delimiter(source, command.span.from, false) else {
+        let Some(environment) = read_tex_environment_delimiter(source, command.span.from, false)
+        else {
             continue;
         };
         cursor = environment.span.to;
@@ -75,7 +76,10 @@ pub fn scan_tikz_figures(source: &str) -> Vec<ScannedFigure> {
         match environment.kind {
             TexEnvironmentKind::Begin => {
                 // Preserve the existing recovery boundary for malformed nested pictures.
-                begin.get_or_insert(FigCursor { name: environment.name.clone(), span: environment.span });
+                begin.get_or_insert(FigCursor {
+                    name: environment.name.clone(),
+                    span: environment.span,
+                });
             }
             TexEnvironmentKind::End => {
                 let Some(begin_fig) = &begin else { continue };
@@ -112,9 +116,9 @@ pub fn scan_tikz_figures(source: &str) -> Vec<ScannedFigure> {
         .map(|pending| {
             let mut base = pending.base;
             base.is_template = pending.contains_unresolved_placeholder
-                && maybe_macro_spans.as_deref().is_some_and(|spans| {
-                    is_inside_any_span(base.begin_span.from, spans)
-                });
+                && maybe_macro_spans
+                    .as_deref()
+                    .is_some_and(|spans| is_inside_any_span(base.begin_span.from, spans));
             base
         })
         .collect()
@@ -150,7 +154,11 @@ fn collect_macro_definition_body_spans(source: &str) -> Vec<Span> {
 
         if matches!(
             command.raw.as_str(),
-            "\\newcommand" | "\\renewcommand" | "\\providecommand" | "\\DeclareRobustCommand" | "\\DeclareMathOperator"
+            "\\newcommand"
+                | "\\renewcommand"
+                | "\\providecommand"
+                | "\\DeclareRobustCommand"
+                | "\\DeclareMathOperator"
         ) {
             if let Some(body) = try_read_new_command_body_span(source, command.span.to) {
                 spans.push(body);
@@ -233,12 +241,15 @@ fn try_read_new_command_body_span(source: &str, from_cursor: usize) -> Option<Sp
     }
 
     cursor = skip_tex_whitespace_and_comments(source, cursor, bytes.len());
-    if let Some(arity_group) = read_tex_balanced_delimited(source, cursor, b'[', b']', bytes.len()) {
+    if let Some(arity_group) = read_tex_balanced_delimited(source, cursor, b'[', b']', bytes.len())
+    {
         cursor = arity_group.to;
     }
 
     cursor = skip_tex_whitespace_and_comments(source, cursor, bytes.len());
-    if let Some(optional_group) = read_tex_balanced_delimited(source, cursor, b'[', b']', bytes.len()) {
+    if let Some(optional_group) =
+        read_tex_balanced_delimited(source, cursor, b'[', b']', bytes.len())
+    {
         cursor = optional_group.to;
     }
 
@@ -248,5 +259,7 @@ fn try_read_new_command_body_span(source: &str, from_cursor: usize) -> Option<Sp
 }
 
 fn is_inside_any_span(offset: usize, spans: &[Span]) -> bool {
-    spans.iter().any(|span| offset >= span.from && offset <= span.to)
+    spans
+        .iter()
+        .any(|span| offset >= span.from && offset <= span.to)
 }

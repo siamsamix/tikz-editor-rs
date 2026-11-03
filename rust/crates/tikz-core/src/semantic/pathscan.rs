@@ -45,22 +45,38 @@ pub fn steps(from: f64, to: f64, step: f64) -> Vec<f64> {
 pub fn parse_arc_shorthand(inner: &str) -> Result<ArcParams, String> {
     let parts: Vec<&str> = inner.split(':').collect();
     if parts.len() != 3 {
-        return Err(format!("expected `arc (start:end:radius)`, got `({inner})`"));
+        return Err(format!(
+            "expected `arc (start:end:radius)`, got `({inner})`"
+        ));
     }
     let start_angle = eval_number(parts[0])?;
     let end_angle = eval_number(parts[1])?;
     let radius = parts[2].trim();
     if let Some((rx, ry)) = radius.split_once(" and ") {
-        Ok(ArcParams { start_angle, end_angle, rx: parse_length(rx)?, ry: parse_length(ry)? })
+        Ok(ArcParams {
+            start_angle,
+            end_angle,
+            rx: parse_length(rx)?,
+            ry: parse_length(ry)?,
+        })
     } else {
         let value = parse_length(radius)?;
-        Ok(ArcParams { start_angle, end_angle, rx: value, ry: value })
+        Ok(ArcParams {
+            start_angle,
+            end_angle,
+            rx: value,
+            ry: value,
+        })
     }
 }
 
 /// Parse a length, reporting whether it carried an explicit unit.
 pub fn parse_length(raw: &str) -> Result<Length, String> {
-    let trimmed = raw.trim().trim_start_matches('{').trim_end_matches('}').trim();
+    let trimmed = raw
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim();
     let explicit = trimmed.chars().any(|c| c.is_ascii_alphabetic());
     Ok((eval_len(trimmed, Unit::Cm)?, explicit))
 }
@@ -92,7 +108,9 @@ pub fn parse_coordinate(inner: &str) -> Result<Vec2, String> {
     if name.starts_with('$') {
         return Err("calc coordinates are not supported yet".to_string());
     }
-    Err(format!("named coordinate `{name}` needs nodes, which are not supported yet"))
+    Err(format!(
+        "named coordinate `{name}` needs nodes, which are not supported yet"
+    ))
 }
 
 pub fn parse_point(inner: &str) -> Result<Vec2, String> {
@@ -126,7 +144,9 @@ pub fn ellipse_from_basis(transform: &Transform, rx: f64, ry: f64) -> (f64, f64,
     let s12 = bx.x * bx.y + by.x * by.y;
     let s22 = bx.y * bx.y + by.y * by.y;
     let trace_half = (s11 + s22) / 2.0;
-    let discriminant = (trace_half * trace_half - (s11 * s22 - s12 * s12)).max(0.0).sqrt();
+    let discriminant = (trace_half * trace_half - (s11 * s22 - s12 * s12))
+        .max(0.0)
+        .sqrt();
     let major = (trace_half + discriminant).max(0.0).sqrt();
     let minor = (trace_half - discriminant).max(0.0).sqrt();
     let rotation = if (major - minor).abs() <= 1e-9 {
@@ -135,9 +155,21 @@ pub fn ellipse_from_basis(transform: &Transform, rx: f64, ry: f64) -> (f64, f64,
         (0.5 * (2.0 * s12).atan2(s11 - s22)).to_degrees()
     };
     (
-        if major > 1e-9 { major } else { bx.x.hypot(bx.y) },
-        if minor > 1e-9 { minor } else { by.x.hypot(by.y) },
-        if rotation.abs() <= 1e-9 { 0.0 } else { rotation },
+        if major > 1e-9 {
+            major
+        } else {
+            bx.x.hypot(bx.y)
+        },
+        if minor > 1e-9 {
+            minor
+        } else {
+            by.x.hypot(by.y)
+        },
+        if rotation.abs() <= 1e-9 {
+            0.0
+        } else {
+            rotation
+        },
     )
 }
 
@@ -241,7 +273,9 @@ mod tests {
         );
         let polar = parse_coordinate("30:2").unwrap();
         assert!((polar.x - 2.0 * crate::units::CM_TO_PT * 30f64.to_radians().cos()).abs() < 1e-9);
-        assert!(parse_coordinate("A").unwrap_err().contains("named coordinate"));
+        assert!(parse_coordinate("A")
+            .unwrap_err()
+            .contains("named coordinate"));
         assert!(parse_coordinate("$1+1$").unwrap_err().contains("calc"));
     }
 
@@ -254,5 +288,4 @@ mod tests {
         assert!((ry - 3.0).abs() < 1e-9);
         assert_eq!(rotation, 0.0);
     }
-
 }

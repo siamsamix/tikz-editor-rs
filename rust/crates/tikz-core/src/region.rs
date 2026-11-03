@@ -83,7 +83,10 @@ mod region_unit_tests {
     #[test]
     fn strips_matching_braces() {
         let source = "\\def \\foo {hello }";
-        assert_eq!(to_group_inner_span(Span::new(10, 18), source), Span::new(11, 17));
+        assert_eq!(
+            to_group_inner_span(Span::new(10, 18), source),
+            Span::new(11, 17)
+        );
         assert_eq!(extract_group_inner_raw(Span::new(10, 18), source), "hello ");
     }
 
@@ -91,7 +94,10 @@ mod region_unit_tests {
     fn open_without_close_still_strips_open() {
         // `source {y` has an open brace at 5 and no closing one at 8.
         let source = "x {y";
-        assert_eq!(to_group_inner_span(Span::new(2, 4), source), Span::new(3, 4));
+        assert_eq!(
+            to_group_inner_span(Span::new(2, 4), source),
+            Span::new(3, 4)
+        );
     }
 
     #[test]
@@ -99,7 +105,10 @@ mod region_unit_tests {
         // `a}` ends in a close brace but never opens: only the close side
         // is stripped, independently of the open check.
         let source = "a} b";
-        assert_eq!(to_group_inner_span(Span::new(0, 2), source), Span::new(0, 1));
+        assert_eq!(
+            to_group_inner_span(Span::new(0, 2), source),
+            Span::new(0, 1)
+        );
         assert_eq!(extract_group_inner_raw(Span::new(0, 2), source), "a");
     }
 
@@ -107,19 +116,31 @@ mod region_unit_tests {
     fn clamps_degenerate_spans_to_non_negative() {
         // `to - 1` past `from + 1` would go negative without the clamp.
         let source = "{}";
-        assert_eq!(to_group_inner_span(Span::new(0, 1), source), Span::new(1, 1));
+        assert_eq!(
+            to_group_inner_span(Span::new(0, 1), source),
+            Span::new(1, 1)
+        );
     }
 
     #[test]
     fn non_delimiter_bounds_are_kept() {
         let source = "plain";
-        assert_eq!(to_group_inner_span(Span::new(2, 4), source), Span::new(2, 4));
+        assert_eq!(
+            to_group_inner_span(Span::new(2, 4), source),
+            Span::new(2, 4)
+        );
     }
 
     #[test]
     fn brackets_strip_independently() {
         let source = "\\x [count=\\i] in {1}";
-        assert_eq!(to_bracket_inner_span(Span::new(3, 13), source), Span::new(4, 12));
-        assert_eq!(extract_bracket_inner_raw(Span::new(3, 13), source), "count=\\i");
+        assert_eq!(
+            to_bracket_inner_span(Span::new(3, 13), source),
+            Span::new(4, 12)
+        );
+        assert_eq!(
+            extract_bracket_inner_raw(Span::new(3, 13), source),
+            "count=\\i"
+        );
     }
 }

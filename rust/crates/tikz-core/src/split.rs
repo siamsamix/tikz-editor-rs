@@ -32,7 +32,11 @@ struct Depths {
 
 impl Depths {
     fn new() -> Self {
-        Self { paren: 0, brace: 0, bracket: 0 }
+        Self {
+            paren: 0,
+            brace: 0,
+            bracket: 0,
+        }
     }
 
     fn open(&mut self, byte: u8) {
@@ -78,12 +82,20 @@ pub fn split_top_level_with_ranges(input: &str, separator: u8) -> Vec<SplitPart>
             depths.close(byte);
         }
         if byte == separator && depths.at_top() {
-            ranges.push(SplitPart { value: input[cursor..i].to_string(), from: cursor, to: i });
+            ranges.push(SplitPart {
+                value: input[cursor..i].to_string(),
+                from: cursor,
+                to: i,
+            });
             cursor = i + 1;
         }
         i += 1;
     }
-    ranges.push(SplitPart { value: input[cursor..].to_string(), from: cursor, to: bytes.len() });
+    ranges.push(SplitPart {
+        value: input[cursor..].to_string(),
+        from: cursor,
+        to: bytes.len(),
+    });
     ranges
 }
 

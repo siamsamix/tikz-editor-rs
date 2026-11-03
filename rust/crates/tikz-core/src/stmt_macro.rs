@@ -27,7 +27,8 @@
 //! ```
 
 use crate::ast::{
-    MacroAliasStatement, MacroCommandDefinitionStatement, MacroDefinitionStatement, PgfMathStatement,
+    MacroAliasStatement, MacroCommandDefinitionStatement, MacroDefinitionStatement,
+    PgfMathStatement,
 };
 use crate::region::{extract_group_inner_raw, to_bracket_inner_span, to_group_inner_span};
 use crate::span::Span;
@@ -87,9 +88,7 @@ pub fn map_macro_alias(
     id: String,
 ) -> MacroAliasStatement {
     let (target_raw, target_span) = match target {
-        Some(AliasTargetSource::Command(node)) => {
-            (scalar(&source[node.from..node.to]), Some(node))
-        }
+        Some(AliasTargetSource::Command(node)) => (scalar(&source[node.from..node.to]), Some(node)),
         Some(AliasTargetSource::Group(node)) => {
             let inner = to_group_inner_span(node, source);
             (scalar(&source[inner.from..inner.to]), Some(inner))
@@ -191,9 +190,7 @@ pub fn map_macro_command_definition(
         },
     };
 
-    let arity_raw = number
-        .map(|node| &source[node.from..node.to])
-        .unwrap_or("");
+    let arity_raw = number.map(|node| &source[node.from..node.to]).unwrap_or("");
     // Legacy clamps with `Math.max(0, …)`: negative parse results become 0.
     let arity = parse_js_int(arity_raw).map_or(0, |value| value.max(0));
 
@@ -250,7 +247,11 @@ pub fn map_macro_command_definition(
 fn declare_operator_body(inner: &str, starred: bool) -> String {
     format!(
         "{}{{{inner}}}",
-        if starred { "\\operatorname*" } else { "\\operatorname" }
+        if starred {
+            "\\operatorname*"
+        } else {
+            "\\operatorname"
+        }
     )
 }
 
@@ -267,9 +268,7 @@ fn scan_group_command_name(group: Span, source: &str) -> Option<GroupNameMatch> 
             continue;
         }
         let mut end = start + 1;
-        while end < bytes.len()
-            && (bytes[end].is_ascii_alphabetic() || bytes[end] == b'@')
-        {
+        while end < bytes.len() && (bytes[end].is_ascii_alphabetic() || bytes[end] == b'@') {
             end += 1;
         }
         if end > start + 1 {
@@ -295,7 +294,9 @@ fn parse_js_int(raw: &str) -> Option<i64> {
             break;
         }
         any = true;
-        value = value.saturating_mul(10).saturating_add((byte - b'0') as i64);
+        value = value
+            .saturating_mul(10)
+            .saturating_add((byte - b'0') as i64);
         idx += 1;
     }
     if !any {
@@ -335,9 +336,7 @@ pub fn map_pgf_math(
         .command
         .map(|node| scalar(&source[node.from..node.to]))
         .unwrap_or_else(|| "\\pgfmathparse".to_string());
-    let command_raw = if raw_command == "\\pgfmathsetmacro"
-        || raw_command == "\\pgfmathsetseed"
-    {
+    let command_raw = if raw_command == "\\pgfmathsetmacro" || raw_command == "\\pgfmathsetseed" {
         raw_command
     } else {
         "\\pgfmathparse".to_string()
@@ -628,10 +627,7 @@ mod stmt_macro_unit_tests {
         );
         assert_eq!(stmt.command_raw, "\\pgfmathsetmacro");
         assert_eq!(stmt.args_raw, vec!["\\a".to_string(), "1+2".to_string()]);
-        assert_eq!(
-            stmt.args_span,
-            vec![Span::new(17, 19), Span::new(21, 24)]
-        );
+        assert_eq!(stmt.args_span, vec![Span::new(17, 19), Span::new(21, 24)]);
         assert_eq!(stmt.raw, source);
         assert_eq!(stmt.span, Span::new(0, 25));
     }

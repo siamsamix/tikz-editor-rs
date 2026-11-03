@@ -32,7 +32,9 @@ pub fn read_tex_control_sequence(source: &str, from: usize) -> Option<TexControl
         return None;
     }
     let mut cursor = from + 1;
-    while cursor < bytes.len() && bytes[cursor].is_ascii_alphabetic() || cursor < bytes.len() && bytes[cursor] == b'@' {
+    while cursor < bytes.len() && bytes[cursor].is_ascii_alphabetic()
+        || cursor < bytes.len() && bytes[cursor] == b'@'
+    {
         cursor += 1;
     }
     if cursor == from + 1 {
@@ -128,7 +130,11 @@ pub fn read_tex_environment_delimiter(
     }
     Some(TexEnvironmentDelimiter {
         span: Span::new(from, cursor + 1),
-        kind: if command.raw == "\\begin" { TexEnvironmentKind::Begin } else { TexEnvironmentKind::End },
+        kind: if command.raw == "\\begin" {
+            TexEnvironmentKind::Begin
+        } else {
+            TexEnvironmentKind::End
+        },
         name: source[name_from + 1..cursor].to_string(),
     })
 }
@@ -140,7 +146,11 @@ fn is_env_name_byte(byte: u8) -> bool {
 /// Given the control sequence at `command`, consume a supported verbatim form
 /// (`\verb*`…`*`, `\begin{verbatim}` … `\end{verbatim*}`) and return the end
 /// offset, or [`None`] when the command is not verbatim-like.
-pub fn skip_tex_verbatim(source: &str, command: &TexControlSequence, allow_environment_trivia: bool) -> Option<usize> {
+pub fn skip_tex_verbatim(
+    source: &str,
+    command: &TexControlSequence,
+    allow_environment_trivia: bool,
+) -> Option<usize> {
     let bytes = source.as_bytes();
     if command.raw == "\\verb" {
         let delimiter_from = if bytes.get(command.span.to) == Some(&b'*') {
@@ -166,7 +176,8 @@ pub fn skip_tex_verbatim(source: &str, command: &TexControlSequence, allow_envir
         }
         return Some(cursor);
     }
-    let environment = read_tex_environment_delimiter(source, command.span.from, allow_environment_trivia)?;
+    let environment =
+        read_tex_environment_delimiter(source, command.span.from, allow_environment_trivia)?;
     if environment.kind != TexEnvironmentKind::Begin
         || (environment.name != "verbatim" && environment.name != "verbatim*")
     {
@@ -255,13 +266,19 @@ mod tex_lex_unit_tests {
 
     #[test]
     fn rejects_non_opening_offset() {
-        assert_eq!(read_tex_balanced_delimited("[a,b]{x}[c]", 4, b'{', b'}', 11), None);
+        assert_eq!(
+            read_tex_balanced_delimited("[a,b]{x}[c]", 4, b'{', b'}', 11),
+            None
+        );
     }
 
     #[test]
     fn option_list_braces_inert() {
         // In `[` mode, `{}` interiors are inert and bare `}` is skipped.
-        assert_eq!(read_tex_balanced_delimited("[a,{b}]", 0, b'[', b']', 7), Some(Span::new(0, 7)));
+        assert_eq!(
+            read_tex_balanced_delimited("[a,{b}]", 0, b'[', b']', 7),
+            Some(Span::new(0, 7))
+        );
     }
 
     #[test]

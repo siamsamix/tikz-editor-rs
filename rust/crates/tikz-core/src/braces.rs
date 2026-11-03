@@ -48,10 +48,7 @@ pub fn is_wrapped_by_single_brace_pair(raw: &str) -> bool {
 /// longer starts and ends with a single balanced brace pair.
 pub fn strip_wrapping_braces(value_raw: &str) -> &str {
     let mut value = value_raw.trim();
-    while value.starts_with('{')
-        && value.ends_with('}')
-        && is_wrapped_by_single_brace_pair(value)
-    {
+    while value.starts_with('{') && value.ends_with('}') && is_wrapped_by_single_brace_pair(value) {
         value = value[1..value.len() - 1].trim();
     }
     value

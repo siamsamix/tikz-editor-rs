@@ -36,3 +36,6 @@ pub mod svg_numbers;
 pub mod tex_lex;
 pub mod tok;
 pub mod units;
+
+#[cfg(test)]
+pub mod fuzz;

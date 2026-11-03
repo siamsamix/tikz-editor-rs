@@ -218,16 +218,11 @@ fn compile_node_statement(
                 return;
             };
             let inner = &source[cursor + 1..close];
-            match pathscan::parse_coordinate(inner) {
-                Ok(point) if !center_set => {
+            if let Ok(point) = pathscan::parse_coordinate(inner) {
+                if !center_set {
                     center = point;
                     center_set = true;
                 }
-                Err(_) => {
-                    // Not a coordinate: treat as a named coordinate reference,
-                    // resolved later in Phase 2.
-                }
-                _ => {}
             }
             cursor = close + 1;
             continue;
@@ -249,9 +244,8 @@ fn compile_node_statement(
                     return;
                 };
                 let inner = &source[cursor + 1..close];
-                match pathscan::parse_coordinate(inner) {
-                    Ok(point) => center = point,
-                    Err(_) => {}
+                if let Ok(point) = pathscan::parse_coordinate(inner) {
+                    center = point;
                 }
                 cursor = close + 1;
             }
@@ -400,7 +394,7 @@ fn matching(src: &str, open: usize, end: usize, lo: u8, hi: u8) -> Option<usize>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scene::{PathCmd, SceneElement, SceneText};
+    use crate::scene::{PathCmd, SceneElement};
 
     fn scene_of(source: &str) -> (Scene, Vec<Issue>) {
         compile_scene(source).unwrap_or_else(|issues| panic!("compile failed: {issues:?}"))

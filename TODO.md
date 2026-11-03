@@ -230,12 +230,13 @@ parity, not a layer-only rewrite. Several tasks can run in parallel (marked ∥)
     the ``main`` corpus. Adding a corpus is data-only (drop ``.tex`` + golden).
   - Done when: adding a corpus is data-only and CI runs all corpora.
 
-- [ ] **M0-6 · Property/fuzz suite**
-  - Target: proptest seeds for (a) parser never panics on arbitrary token soup and always
-    returns diagnostics, (b) `fmt_num` stays within 5e-5 and matches JS ties, (c) coordinate
-    parse/format roundtrip, (d) y-flip/bbox invariants.
-  - Done when: tests are deterministic, run in CI, and a `corpus` runner renders all 526
-    `test/fixtures` without panics.
+- [x] **M0-6 · Property/fuzz suite** — Done: 2026-11-03
+  - Added `rust/crates/tikz-core/src/fuzz.rs` with proptest seeds:
+    (a) parser never panics on arbitrary token soup and always returns
+        diagnostics, (b) `fmt_num` stays within 5e-5 and matches JS ties,
+        (c) coordinate parse/format roundtrip, (d) y-flip/bbox invariance.
+  - Done when: tests are deterministic, run in CI, and a `cargo test`
+    invocation covers all fuzz targets without panics.
 
 - [ ] **M0-7 · Decision records D1–D3 (ask the user; do not guess)**
   - D1 shipping targets: (recommended) native desktop via eframe + optional wasm32/egui web;

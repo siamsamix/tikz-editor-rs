@@ -20,6 +20,12 @@ pub const DEFAULT_LINE_WIDTH_PT: f64 = 0.4;
 /// Default text font size in points (legacy `DEFAULT_TEXT_FONT_SIZE`).
 pub const DEFAULT_TEXT_FONT_SIZE_PT: f64 = 9.96264;
 
+/// Default arrow length in points (legacy `DEFAULT_ARROW_LENGTH`).
+pub const DEFAULT_ARROW_LENGTH_PT: f64 = 8.0;
+
+/// Default arrow width in points (legacy `DEFAULT_ARROW_WIDTH`).
+pub const DEFAULT_ARROW_WIDTH_PT: f64 = 6.0;
+
 /// Millimeters to points — the legacy mm constant used by pattern tiles
 /// (`svg/emit.ts:1485` = 2.84527559055).
 pub const MM_TO_PT: f64 = 2.84527559055;

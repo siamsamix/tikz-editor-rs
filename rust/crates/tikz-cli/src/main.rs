@@ -118,7 +118,7 @@ fn bench(stage: &str, corpus_dir: &str, iterations: usize) -> ExitCode {
     let mut sources: Vec<String> = Vec::new();
     for entry in corpus.into_iter().flatten() {
         let path = entry.path();
-        if path.extension().map_or(false, |e| e == "tex") {
+        if path.extension().is_some_and(|e| e == "tex") {
             match fs::read_to_string(&path) {
                 Ok(text) => sources.push(text),
                 Err(e) => {

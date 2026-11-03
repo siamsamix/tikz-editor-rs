@@ -98,7 +98,8 @@ proptest! {
     #[test]
     fn coordinate_parse_roundtrip(x in lenish(), y in lenish()) {
         let input = format!("({}cm,{}cm)", x, y);
-        let parsed = crate::semantic::pathscan::parse_coordinate(&input[1..input.len()-1]);
+        let parsed =
+            crate::semantic::pathscan::parse_coordinate(&input[1..input.len() - 1], None);
         prop_assert!(parsed.is_ok());
         let p = parsed.unwrap();
         prop_assert!((p.x - x * crate::units::CM_TO_PT).abs() < 1e-6);

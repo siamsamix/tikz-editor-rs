@@ -5,6 +5,8 @@
 //! parsing and the radius/arc geometry helpers, while `pathbuild` owns the
 //! statement state machine and the shape emitters.
 
+use std::collections::HashMap;
+
 use crate::semantic::expr::{eval_len, eval_number, Unit};
 use crate::semantic::style::Issue;
 use crate::semantic::transform::Transform;
@@ -89,8 +91,49 @@ pub fn parse_radii(inner: &str) -> Result<(Length, Length), String> {
     Ok((parse_length(rx)?, parse_length(ry)?))
 }
 
-/// Parse `(x,y)` or `(angle:radius)`.
-pub fn parse_coordinate(inner: &str) -> Result<Vec2, String> {
+/// True when `text` is a bare coordinate name (e.g. `A`, `node_1`) rather than
+/// a cartesian/polar/calc expression. Names may not start with a digit or sign.
+pub fn is_bare_name(text: &str) -> bool {
+    let text = text.trim();
+    if text.is_empty() {
+        return false;
+    }
+    let mut chars = text.chars();
+    let first = match chars.next() {
+        Some(c) => c,
+        None => return false,
+    };
+    if first.is_ascii_digit() || first == '+' || first == '-' {
+        return false;
+    }
+    text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Registry of named coordinates defined within one figure (`\node (name)` /
+/// `\coordinate (name)`) and resolved when a bare `(name)` is used as a path
+/// coordinate. Points are stored in canvas space at definition time.
+#[derive(Default)]
+pub struct NamedCoordinates {
+    points: HashMap<String, Vec2>,
+}
+
+impl NamedCoordinates {
+    /// Record (or overwrite) the canvas position of `name`.
+    pub fn insert(&mut self, name: &str, point: Vec2) {
+        self.points.insert(name.to_string(), point);
+    }
+
+    /// Look up the canvas position of `name`, if it has been defined.
+    pub fn get(&self, name: &str) -> Option<Vec2> {
+        self.points.get(name).copied()
+    }
+}
+
+/// Parse `(x,y)` or `(angle:radius)` into canvas points.
+///
+/// A bare name (e.g. `A`, `node_1`) is resolved through [`NamedCoordinates`]
+/// when one is supplied; otherwise it errors as unsupported.
+pub fn parse_coordinate(inner: &str, named: Option<&NamedCoordinates>) -> Result<Vec2, String> {
     let text = inner.trim();
     if let Some((angle, radius)) = text.split_once(':') {
         let angle = eval_number(angle)?;
@@ -108,9 +151,15 @@ pub fn parse_coordinate(inner: &str) -> Result<Vec2, String> {
     if name.starts_with('$') {
         return Err("calc coordinates are not supported yet".to_string());
     }
-    Err(format!(
-        "named coordinate `{name}` needs nodes, which are not supported yet"
-    ))
+    if is_bare_name(name) {
+        if let Some(point) = named.and_then(|registry| registry.get(name)) {
+            return Ok(point);
+        }
+        return Err(format!(
+            "named coordinate `{name}` needs nodes, which are not supported yet"
+        ));
+    }
+    Err(format!("unsupported coordinate expression `{inner}`"))
 }
 
 pub fn parse_point(inner: &str) -> Result<Vec2, String> {
@@ -267,16 +316,31 @@ mod tests {
 
     #[test]
     fn coordinate_forms_evaluate() {
+        let named = NamedCoordinates::default();
         assert_eq!(
-            parse_coordinate("1,2").unwrap(),
+            parse_coordinate("1,2", Some(&named)).unwrap(),
             Vec2::new(crate::units::CM_TO_PT, 2.0 * crate::units::CM_TO_PT)
         );
-        let polar = parse_coordinate("30:2").unwrap();
+        let polar = parse_coordinate("30:2", Some(&named)).unwrap();
         assert!((polar.x - 2.0 * crate::units::CM_TO_PT * 30f64.to_radians().cos()).abs() < 1e-9);
-        assert!(parse_coordinate("A")
+        assert!(parse_coordinate("A", Some(&named))
             .unwrap_err()
             .contains("named coordinate"));
-        assert!(parse_coordinate("$1+1$").unwrap_err().contains("calc"));
+        assert!(parse_coordinate("$1+1$", Some(&named))
+            .unwrap_err()
+            .contains("calc"));
+
+        // A defined named coordinate resolves to its canvas position.
+        let mut named = NamedCoordinates::default();
+        named.insert("A", Vec2::new(5.0, 7.0));
+        assert_eq!(
+            parse_coordinate("A", Some(&named)).unwrap(),
+            Vec2::new(5.0, 7.0)
+        );
+        // Unknown name still errors.
+        assert!(parse_coordinate("B", Some(&named))
+            .unwrap_err()
+            .contains("named coordinate"));
     }
 
     #[test]

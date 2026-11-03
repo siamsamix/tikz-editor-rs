@@ -21,6 +21,7 @@ use crate::figure_scan::scan_tikz_figures;
 use crate::ids::path_statement_id;
 use crate::options::parse_option_list_raw;
 use crate::scene::{Paint, Scene, SceneElement, SceneText};
+use crate::semantic::pathscan::NamedCoordinates;
 use crate::span::Span;
 use crate::units::Vec2;
 
@@ -68,6 +69,9 @@ pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
     }
 
     let mut scene = Scene::default();
+    // Named coordinates defined by `\node (name)` / `\coordinate (name)` within
+    // this figure, resolved when a bare `(name)` is used in a path.
+    let mut named = NamedCoordinates::default();
     for (index, (from, to, terminated)) in split_statements(source, cursor, end)
         .into_iter()
         .enumerate()
@@ -81,7 +85,8 @@ pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
         }
         compile_statement(
             source,
-            &figure_state,
+            &mut figure_state,
+            &mut named,
             index,
             from,
             to,
@@ -98,9 +103,11 @@ pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
 }
 
 /// Compile one `;`-terminated statement (`to` excludes the `;`).
+#[allow(clippy::too_many_arguments)]
 fn compile_statement(
     source: &str,
-    figure_state: &StyleState,
+    figure_state: &mut StyleState,
+    named: &mut NamedCoordinates,
     index: usize,
     from: usize,
     to: usize,
@@ -115,7 +122,21 @@ fn compile_statement(
 
     // `\node` statements build text elements instead of paths.
     if command == "node" {
-        return compile_node_statement(source, figure_state, index, after, to, scene, issues);
+        return compile_node_statement(
+            source,
+            figure_state,
+            named,
+            index,
+            after,
+            to,
+            scene,
+            issues,
+        );
+    }
+
+    // `\coordinate (name) at (x,y);` defines a named coordinate, no element.
+    if command == "coordinate" {
+        return compile_coordinate_statement(source, figure_state, named, index, after, to, issues);
     }
 
     let mut state = figure_state.clone();
@@ -134,6 +155,15 @@ fn compile_statement(
                 Span::new(at, after),
                 "`\\clip` is ignored (clipping paths are not supported yet)",
             ));
+            return;
+        }
+        "tikzset" | "tikzstyle" => {
+            // `\tikzset` / `\tikzstyle` define style aliases (e.g.
+            // `\tikzset{box/.style={draw, circle}}`). The option list was
+            // parsed into `state.style_definitions` by `apply_kv`; copy those
+            // definitions back to the figure state so they persist across
+            // statements.
+            figure_state.style_definitions = state.style_definitions.clone();
             return;
         }
         other => {
@@ -161,6 +191,7 @@ fn compile_statement(
         source,
         source_id: path_statement_id(index),
         state,
+        named,
     };
     scene
         .elements
@@ -171,11 +202,15 @@ fn compile_statement(
 ///
 /// Supported subset: `[options]`, a leading named coordinate `(name)` or a
 /// placement `(x,y)`, an optional `at (x,y)`, and a trailing `{text}` group.
-/// Unsupported constructs inside a node produce issues but never drop the
-/// statement silently.
+/// A leading bare `(name)` registers that name at the resolved placement so
+/// later path statements can refer to it (`\draw (name) -- ...`). Unsupported
+/// constructs inside a node produce issues but never drop the statement
+/// silently.
+#[allow(clippy::too_many_arguments)]
 fn compile_node_statement(
     source: &str,
     figure_state: &StyleState,
+    named: &mut NamedCoordinates,
     index: usize,
     from: usize,
     to: usize,
@@ -199,9 +234,12 @@ fn compile_node_statement(
         cursor = close + 1;
     }
 
-    // Read placement: optional `(name)` / `(x,y)` then optional `at (x,y)`.
+    // Read placement: optional leading `(name)` definition, then optional
+    // `(x,y)` / `at (x,y)`. The leading bare name, if any, is registered at the
+    // resolved placement after the loop.
     let mut center = Vec2::new(0.0, 0.0);
     let mut center_set = false;
+    let mut defined_name: Option<String> = None;
     while cursor < to {
         cursor = skip_trivia(source, cursor, to);
         let byte = source.as_bytes()[cursor];
@@ -218,10 +256,17 @@ fn compile_node_statement(
                 return;
             };
             let inner = &source[cursor + 1..close];
-            if let Ok(point) = pathscan::parse_coordinate(inner) {
+            let trimmed = inner.trim();
+            if pathscan::is_bare_name(trimmed) && defined_name.is_none() {
+                // Leading `(name)`: a coordinate definition, resolved at the
+                // placement below once the placement point is known.
+                defined_name = Some(trimmed.to_string());
+            } else if let Ok(point) = pathscan::parse_coordinate(inner, Some(named)) {
                 if !center_set {
                     center = point;
                     center_set = true;
+                } else {
+                    center = point; // `at` overrides an earlier placement.
                 }
             }
             cursor = close + 1;
@@ -244,8 +289,9 @@ fn compile_node_statement(
                     return;
                 };
                 let inner = &source[cursor + 1..close];
-                if let Ok(point) = pathscan::parse_coordinate(inner) {
+                if let Ok(point) = pathscan::parse_coordinate(inner, Some(named)) {
                     center = point;
+                    center_set = true;
                 }
                 cursor = close + 1;
             }
@@ -253,6 +299,11 @@ fn compile_node_statement(
         }
         // Anything else ends placement scanning; the rest is the text group.
         break;
+    }
+
+    // Register a leading `(name)` definition at the resolved placement point.
+    if let Some(name) = defined_name.take() {
+        named.insert(&name, center);
     }
 
     // Trailing `{text}` group.
@@ -269,8 +320,7 @@ fn compile_node_statement(
         text = source[cursor + 1..close].to_string();
     }
 
-    // Build the text element. Named coordinates are not resolved yet
-    // (Phase 2); they render at the origin.
+    // Build the text element.
     let text_style = state.text_style();
     let lines: Vec<String> = text
         .split('\\')
@@ -294,6 +344,97 @@ fn compile_node_statement(
         width,
         height,
     }));
+}
+
+/// Compile one `\coordinate (name) at (x,y);` statement: it defines a named
+/// coordinate and produces no drawn element.
+#[allow(clippy::too_many_arguments)]
+fn compile_coordinate_statement(
+    source: &str,
+    figure_state: &StyleState,
+    named: &mut NamedCoordinates,
+    _index: usize,
+    from: usize,
+    to: usize,
+    issues: &mut Vec<Issue>,
+) {
+    let mut cursor = skip_trivia(source, from, to);
+    let mut state = figure_state.clone();
+
+    // Options `[…]` (rare but legal: `\coordinate[...] (name) at ...`).
+    if source[cursor..to].starts_with('[') {
+        let Some(close) = matching(source, cursor, to, b'[', b']') else {
+            issues.push(Issue::error(
+                Span::new(cursor, to),
+                "unterminated option list",
+            ));
+            return;
+        };
+        let list = parse_option_list_raw(&source[cursor..=close], cursor);
+        state.apply(&list, issues);
+        cursor = close + 1;
+    }
+
+    let mut center = Vec2::new(0.0, 0.0);
+    let mut center_set = false;
+    let mut defined_name: Option<String> = None;
+    while cursor < to {
+        cursor = skip_trivia(source, cursor, to);
+        let byte = source.as_bytes()[cursor];
+        if byte == b'(' {
+            let Some(close) = matching(source, cursor, to, b'(', b')') else {
+                issues.push(Issue::error(
+                    Span::new(cursor, to),
+                    "unterminated coordinate",
+                ));
+                return;
+            };
+            let inner = &source[cursor + 1..close];
+            if pathscan::is_bare_name(inner.trim()) && defined_name.is_none() {
+                defined_name = Some(inner.trim().to_string());
+            } else if let Ok(point) = pathscan::parse_coordinate(inner, Some(named)) {
+                center = point;
+                center_set = true;
+            }
+            cursor = close + 1;
+            continue;
+        }
+        let (word, after) = pathscan::read_word(source, cursor, to);
+        if word.is_empty() {
+            cursor = (cursor + 1).min(to);
+            continue;
+        }
+        if word == "at" {
+            cursor = after;
+            cursor = skip_trivia(source, cursor, to);
+            if source.as_bytes().get(cursor) == Some(&b'(') {
+                let Some(close) = matching(source, cursor, to, b'(', b')') else {
+                    issues.push(Issue::error(
+                        Span::new(cursor, to),
+                        "unterminated coordinate",
+                    ));
+                    return;
+                };
+                let inner = &source[cursor + 1..close];
+                if let Ok(point) = pathscan::parse_coordinate(inner, Some(named)) {
+                    center = point;
+                    center_set = true;
+                }
+                cursor = close + 1;
+            }
+            continue;
+        }
+        break;
+    }
+
+    if let Some(name) = defined_name.take() {
+        named.insert(&name, center);
+    } else if center_set {
+        issues.push(Issue::warning(
+            Span::new(from, to),
+            "`\\coordinate` without a name does nothing",
+        ));
+    }
 }
 
 /// `\fill` with no colour paints the current colour; the port's base stroke
@@ -525,9 +666,44 @@ mod tests {
     }
 
     #[test]
-    fn errors_are_returned_and_nothing_is_rendered() {
+    fn defined_named_coordinate_resolves_on_paths() {
+        let cm = crate::units::CM_TO_PT;
+        let (scene, issues) = scene_of(
+            "\\begin{tikzpicture}\\coordinate (A) at (1,2);\\draw[->] (0,0) -- (A);\\end{tikzpicture}",
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        let path = only_path(&scene);
+        assert_eq!(
+            path.cmds,
+            vec![
+                PathCmd::Move(crate::units::Vec2::new(0.0, 0.0)),
+                PathCmd::Line(crate::units::Vec2::new(1.0 * cm, 2.0 * cm)),
+            ]
+        );
+    }
+
+    #[test]
+    fn node_defined_name_resolves_later() {
+        let cm = crate::units::CM_TO_PT;
+        let (scene, issues) = scene_of(
+            "\\begin{tikzpicture}\\node (B) at (3,1) {B};\\draw[dashed] (0,0) -- (B);\\end{tikzpicture}",
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        let path = scene.paths().next().expect("expected a path element");
+        assert_eq!(
+            path.cmds,
+            vec![
+                PathCmd::Move(crate::units::Vec2::new(0.0, 0.0)),
+                PathCmd::Line(crate::units::Vec2::new(3.0 * cm, 1.0 * cm)),
+            ]
+        );
+        assert_eq!(path.style.dash, Some(vec![3.0, 3.0]));
+    }
+
+    #[test]
+    fn unknown_named_coordinate_is_an_error() {
         let issues = compile_scene("\\begin{tikzpicture}\\draw (A) -- (B);\\end{tikzpicture}")
-            .expect_err("named coordinates must fail");
+            .expect_err("undefined named coordinates must fail");
         assert!(issues.iter().any(|issue| issue.severity == Severity::Error));
     }
 

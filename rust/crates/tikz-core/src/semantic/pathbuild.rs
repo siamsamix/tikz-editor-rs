@@ -16,7 +16,7 @@ use crate::options::parse_option_list_raw;
 use crate::scene::{PathCmd, SceneElement, ScenePath};
 use crate::semantic::pathscan::{
     matching, parse_arc_shorthand, parse_coordinate, parse_length, parse_point, parse_radii,
-    read_word, skip_optional_groups, skip_trivia, ArcParams,
+    read_word, skip_optional_groups, skip_trivia, ArcParams, NamedCoordinates,
 };
 use crate::semantic::shapes::{emit_arc, emit_circle, emit_ellipse, emit_grid, emit_rectangle};
 use crate::semantic::style::{Issue, StyleState};
@@ -31,6 +31,9 @@ pub struct PathContext<'a> {
     pub source_id: String,
     /// Style state; mid-path option lists update it in place.
     pub state: StyleState,
+    /// Named coordinates defined so far in the figure (mutated by `\node` /
+    /// `\coordinate` statements, consumed when a bare `(name)` is used).
+    pub named: &'a mut NamedCoordinates,
 }
 
 /// One in-progress path.
@@ -189,7 +192,7 @@ pub fn build_path(
                     Ok(corner) => emit_grid(&mut builder, ctx, &mut elements, Some(corner)),
                     Err(error) => issues.push(Issue::error(span, error)),
                 },
-                Pending::None => match parse_coordinate(&inner) {
+                Pending::None => match parse_coordinate(&inner, Some(ctx.named)) {
                     Ok(parsed) => {
                         let transform = ctx.state.transform;
                         let local = match relative {
@@ -222,7 +225,7 @@ pub fn build_path(
             let open = skip_trivia(src, at + 2, to);
             if src.as_bytes().get(open) == Some(&b'(') {
                 if let Some(close) = matching(src, open, to, b'(', b')') {
-                    match parse_coordinate(&src[open + 1..close]) {
+                    match parse_coordinate(&src[open + 1..close], Some(ctx.named)) {
                         Ok(target) => {
                             let transform = ctx.state.transform;
                             let local_from = builder.local.unwrap_or(target);

@@ -222,13 +222,13 @@ parity, not a layer-only rewrite. Several tasks can run in parallel (marked ∥)
   - Target: `tikz-cli bench <stage> <corpus_dir> [iterations]` printing `BENCH <stage> docs=<n> iterations=<n> renders=<n> wall_ms=<x> per_render_ms=<y>` shape matching legacy capture script; stages: legacy_baseline, safe-rust, soa-threaded, pgo-lto.
   - Done when: `tikz-cli bench` runs against a corpus dir and prints the BENCH line.
 
-- [ ] **M0-5 · Corpus expansion harness**
+- [x] **M0-5 · Corpus expansion harness** — Done: 2026-11-03
   - Anchor: `migration/parity.py` (`CORPORA` dict), `migration/capture-slice3.mjs`,
     `migration/golden-capture.mjs`.
-  - Do: one corpus directory per feature phase (`corpus-nodes`, `corpus-arrows`, …), text-free
-    where possible, with legacy goldens captured before implementation; make the runner
-    auto-discover corpora instead of editing a hard-coded dict.
-  - Done when: adding a corpus is data-only (drop `.tex` + golden) and CI runs all corpora.
+  - Do: `parity.py` now auto-discovers corpora under ``migration/corpus-<name>/``
+    paired with ``migration/goldens-<name>/``; a bare ``migration/goldens/`` is
+    the ``main`` corpus. Adding a corpus is data-only (drop ``.tex`` + golden).
+  - Done when: adding a corpus is data-only and CI runs all corpora.
 
 - [ ] **M0-6 · Property/fuzz suite**
   - Target: proptest seeds for (a) parser never panics on arbitrary token soup and always

@@ -37,6 +37,32 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e:ci
 
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: rust -> target
+      - name: Format check
+        run: cargo fmt --check
+        working-directory: rust
+      - name: Unit, integration and doc tests
+        run: cargo test --workspace --all-targets
+        working-directory: rust
+      - name: Doc tests
+        run: cargo test --workspace --doc
+        working-directory: rust
+      - name: Clippy (zero warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        working-directory: rust
+      - name: Build tikz-cli
+        run: cargo build -p tikz-cli
+        working-directory: rust
+      - name: Parity runner (slice-3 corpus)
+        run: python3 migration/parity.py
+
   desktop-linux:
     runs-on: ubuntu-latest
     steps:

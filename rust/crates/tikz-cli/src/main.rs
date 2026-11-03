@@ -3,6 +3,7 @@
 //!
 //! ```text
 //! tikz-cli render <input.tex> <output.svg>
+//! tikz-cli parse --json <input.tex> <output.json>
 //! ```
 //!
 //! Exit codes: `0` ok (warnings allowed, printed to stderr), `2` usage or
@@ -10,14 +11,21 @@
 //! (diagnostics on stderr, no SVG written).
 
 use std::process::ExitCode;
+use tikz_core::parser::parse_tex;
 use tikz_core::render::{render_tex_with_warnings, Diagnostic};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [cmd, input, output] if cmd == "render" => render(input, output),
+        [cmd, flag, input, output] if cmd == "parse" && flag == "--json" => {
+            parse_json(input, output)
+        }
+        [cmd, input, output] if cmd == "parse" => parse_json(input, output),
         _ => {
-            eprintln!("usage: tikz-cli render <input.tex> <output.svg>");
+            eprintln!(
+                "usage: tikz-cli render <input.tex> <output.svg>\n       tikz-cli parse --json <input.tex> [output.json]"
+            );
             ExitCode::from(2)
         }
     }
@@ -54,6 +62,31 @@ fn render(input: &str, output: &str) -> ExitCode {
     }
 }
 
+fn parse_json(input: &str, output: &str) -> ExitCode {
+    let source = match std::fs::read_to_string(input) {
+        Ok(text) => text,
+        Err(e) => {
+            eprintln!("{input}: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let document = parse_tex(&source);
+    let json = match serde_json::to_string_pretty(&document) {
+        Ok(text) => text,
+        Err(e) => {
+            eprintln!("serialize: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    match std::fs::write(output, json) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{output}: {e}");
+            ExitCode::from(2)
+        }
+    }
+}
+
 /// `line:col: message` for a diagnostic (1-based, counted in chars).
 fn describe(source: &str, d: &Diagnostic) -> String {
     let (line, col) = d.line_col(source);
@@ -75,8 +108,7 @@ mod tests {
 
     #[test]
     fn warnings_render_and_errors_do_not() {
-        let with_warning =
-            "\\begin{tikzpicture}\\draw (0,0) -- (1,1) node {A};\\end{tikzpicture}";
+        let with_warning = "\\begin{tikzpicture}\\draw (0,0) -- (1,1) node {A};\\end{tikzpicture}";
         assert!(render_tex_with_warnings(with_warning).is_ok());
         let with_error = "\\begin{tikzpicture}\\draw (A) -- (B);\\end{tikzpicture}";
         assert!(render_tex_with_warnings(with_error).is_err());

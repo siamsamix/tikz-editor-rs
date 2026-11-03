@@ -1,7 +1,7 @@
 //! Inclusive-exclusive span offsets into a source string.
 
 /// A half-open `[from, to)` byte range in the source document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct Span {
     /// First byte inside the span.
     pub from: usize,

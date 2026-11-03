@@ -11,3 +11,5 @@ path = "src/main.rs"
 
 [dependencies]
 tikz-core = { path = "../tikz-core" }
+# serde_json is used to serialize the parse dump for M0-2 statement parity.
+serde_json = "1"

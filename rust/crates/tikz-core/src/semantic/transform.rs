@@ -118,6 +118,37 @@ impl Transform {
         )
     }
 
+    /// Linear part of the transform as `(a, b, c, d)` mapping a local vector
+    /// to a world vector: `x' = a*x + c*y`, `y' = b*x + d*y`.
+    ///
+    /// This is the CTM linear part that PGF's `topaths` reads for `to`
+    /// curves; a singular transform falls back to the identity.
+    pub fn linear(&self) -> (f64, f64, f64, f64) {
+        let radians = self.rotate_deg.to_radians();
+        let (sin, cos) = radians.sin_cos();
+        (
+            self.scale_x * cos,
+            -self.scale_x * sin,
+            self.scale_y * sin,
+            self.scale_y * cos,
+        )
+    }
+
+    /// Apply the inverse linear part to a world vector, yielding a local
+    /// vector. Returns `None` when the transform is singular.
+    pub fn inverse_apply_vector(&self, vector: Vec2) -> Option<Vec2> {
+        let (a, b, c, d) = self.linear();
+        let det = a * d - b * c;
+        if det.abs() <= 1e-12 || !det.is_finite() {
+            return None;
+        }
+        let inv = 1.0 / det;
+        Some(Vec2::new(
+            (d * vector.x - c * vector.y) * inv,
+            (a * vector.y - b * vector.x) * inv,
+        ))
+    }
+
     /// Whether the transform changes any geometry.
     pub fn is_identity(&self) -> bool {
         *self == Transform::default()

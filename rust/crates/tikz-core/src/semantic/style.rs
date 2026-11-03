@@ -148,6 +148,20 @@ pub struct StyleState {
     pub end_angle: Option<f64>,
     /// `step=` for `grid`, with its explicit-unit flag.
     pub grid_step: Option<(f64, bool)>,
+    /// `to`/curve out angle (degrees), set by `out=` / `bend`.
+    pub to_out: Option<f64>,
+    /// `to`/curve in angle (degrees), set by `in=` / `bend`.
+    pub to_in: Option<f64>,
+    /// `to`/curve looseness, set by `looseness=`.
+    pub to_looseness: Option<f64>,
+    /// `to`/curve out looseness, set by `out looseness=`.
+    pub to_out_looseness: Option<f64>,
+    /// `to`/curve in looseness, set by `in looseness=`.
+    pub to_in_looseness: Option<f64>,
+    /// `to`/curve signed bend angle: positive = `bend left`, negative = `bend right`.
+    pub to_bend: Option<f64>,
+    /// Whether `bend left`/`bend right` made the curve relative to the chord.
+    pub to_relative: bool,
     /// Resolved text style defaults inherited into `\node` text.
     pub font_family: FontFamily,
     /// Text font size in pt.
@@ -181,6 +195,13 @@ impl Default for StyleState {
             start_angle: None,
             end_angle: None,
             grid_step: None,
+            to_out: None,
+            to_in: None,
+            to_looseness: None,
+            to_out_looseness: None,
+            to_in_looseness: None,
+            to_bend: None,
+            to_relative: false,
             font_family: FontFamily::Serif,
             font_size: crate::units::DEFAULT_TEXT_FONT_SIZE_PT,
             font_weight: false,
@@ -251,6 +272,18 @@ impl StyleState {
             "help lines" => {
                 self.style.stroke = Paint::Rgb(0x80, 0x80, 0x80);
                 self.style.stroke_width = 0.2;
+            }
+            "bend left" | "bend right" => {
+                // `bend left`/`bend right` default to a 30° bend, made relative
+                // to the chord heading by `to` curve resolution. `bend angle=`
+                // overrides the magnitude before resolution.
+                let angle = self.to_bend.unwrap_or(30.0);
+                self.to_bend = if key == "bend left" {
+                    Some(angle.abs())
+                } else {
+                    Some(-angle.abs())
+                };
+                self.to_relative = true;
             }
             _ => {
                 // Check for arrow shorthand: ->, <-, <->, -|, |-
@@ -527,6 +560,31 @@ impl StyleState {
                 }
                 Err(error) => issues.push(Issue::warning(span, format!("{key}: {error}"))),
             },
+            "out" | "in" | "looseness" | "out looseness" | "in looseness" | "bend angle"
+            | "bend left" | "bend right" => match eval_number(value_trimmed) {
+                Ok(degrees) => match key {
+                    "out" => self.to_out = Some(degrees),
+                    "in" => self.to_in = Some(degrees),
+                    "looseness" => self.to_looseness = Some(degrees),
+                    "out looseness" => self.to_out_looseness = Some(degrees),
+                    "in looseness" => self.to_in_looseness = Some(degrees),
+                    "bend angle" => self.to_bend = Some(degrees),
+                    "bend left" => {
+                        self.to_bend = Some(degrees.abs());
+                        self.to_relative = true;
+                    }
+                    "bend right" => {
+                        self.to_bend = Some(-degrees.abs());
+                        self.to_relative = true;
+                    }
+                    _ => {}
+                },
+                Err(error) => issues.push(Issue::warning(span, format!("{key}: {error}"))),
+            },
+            "relative" => match parse_relative_boolean(value_trimmed) {
+                Ok(value) => self.to_relative = value,
+                Err(error) => issues.push(Issue::warning(span, format!("relative: {error}"))),
+            },
             // Text font size commands: \tiny, \small, \Large, etc.
             key if key.starts_with('\\') => {
                 let font_size_factor = match key {
@@ -718,6 +776,20 @@ pub fn parse_dash_pattern(raw: &str) -> Option<Vec<f64>> {
         }
     }
     (!values.is_empty()).then_some(values)
+}
+
+/// Parse a boolean option value (`true`/`false`/`yes`/`no`/`on`/`off`/`1`/`0`).
+/// Empty value means `true` (legacy `relative` with no value is true).
+pub fn parse_relative_boolean(raw: &str) -> Result<bool, String> {
+    let trimmed = raw.trim().to_ascii_lowercase();
+    if trimmed.is_empty() {
+        return Ok(true);
+    }
+    match trimmed.as_str() {
+        "true" | "yes" | "on" | "1" => Ok(true),
+        "false" | "no" | "off" | "0" => Ok(false),
+        other => Err(format!("expected a boolean, got `{other}`")),
+    }
 }
 
 /// Parse `{(x,y)}` / `(x,y)` into a canvas-space point.

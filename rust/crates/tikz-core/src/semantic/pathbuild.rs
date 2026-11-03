@@ -14,6 +14,7 @@
 
 use crate::options::parse_option_list_raw;
 use crate::scene::{PathCmd, SceneElement, ScenePath};
+use crate::semantic::pathcurve::{resolve_to_curve, to_curve_controls, ToCurveOptions};
 use crate::semantic::pathscan::{
     matching, parse_arc_shorthand, parse_coordinate, parse_length, parse_point, parse_radii,
     read_word, skip_optional_groups, skip_trivia, ArcParams, NamedCoordinates,
@@ -125,6 +126,15 @@ pub fn build_path(
     let mut at = from;
 
     while at < to {
+        // TikZ structural syntax is ASCII-only; a byte index that is not a char
+        // boundary lies inside a multi-byte UTF-8 sequence (stray text). Skip it
+        // so that str slicing at `at` never panics on arbitrary fuzz input.
+        while at < to && !src.is_char_boundary(at) {
+            at += 1;
+        }
+        if at >= to {
+            break;
+        }
         let byte = src.as_bytes()[at];
         if byte == b'%' {
             while at < to && src.as_bytes()[at] != b'\n' {
@@ -222,12 +232,25 @@ pub fn build_path(
         }
         if src[at..to].starts_with("|-") || src[at..to].starts_with("-|") {
             let vertical_first = src[at..to].starts_with("|-");
-            let open = skip_trivia(src, at + 2, to);
+            let mut open = skip_trivia(src, at + 2, to);
+            // Consume `+`/`++` relative prefixes before the coordinate.
+            let mut plus_plus = false;
+            while src.as_bytes().get(open) == Some(&b'+') {
+                open += 1;
+                if src.as_bytes().get(open) == Some(&b'+') {
+                    plus_plus = true;
+                    open += 1;
+                }
+                open = skip_trivia(src, open, to);
+            }
             if src.as_bytes().get(open) == Some(&b'(') {
                 if let Some(close) = matching(src, open, to, b'(', b')') {
                     match parse_coordinate(&src[open + 1..close], Some(ctx.named)) {
                         Ok(target) => {
                             let transform = ctx.state.transform;
+                            let current = builder.current.unwrap_or(Vec2::new(0.0, 0.0));
+                            // `++` makes the target relative to the current point.
+                            let target = if plus_plus { current + target } else { target };
                             let local_from = builder.local.unwrap_or(target);
                             let local_corner = if vertical_first {
                                 Vec2::new(local_from.x, target.y)
@@ -252,6 +275,72 @@ pub fn build_path(
                 "`|-`/`-|` needs a coordinate",
             ));
             break;
+        }
+        if src[at..to].starts_with("..") {
+            // `.. controls (c1) and (c2) .. (target)` cubic curve; plain `..` is treated
+            // as a line connector to the next coordinate.
+            at += 2;
+            at = skip_trivia(src, at, to);
+            let (word, after_word) = read_word(src, at, to);
+            if word == "controls" {
+                let open = skip_trivia(src, after_word, to);
+                let Some(c1_close) = matching(src, open, to, b'(', b')') else {
+                    issues.push(Issue::error(
+                        Span::new(open, to),
+                        "`controls` needs a coordinate",
+                    ));
+                    break;
+                };
+                let c1 = match parse_coordinate(&src[open + 1..c1_close], Some(ctx.named)) {
+                    Ok(p) => p,
+                    Err(error) => {
+                        issues.push(Issue::error(Span::new(open, c1_close + 1), error));
+                        break;
+                    }
+                };
+                // `and (c2)` is optional; when absent the second control equals the first.
+                let mut c2 = c1;
+                let mut at2 = skip_trivia(src, c1_close + 1, to);
+                if src[at2..to].starts_with("and") {
+                    at2 += 3;
+                    at2 = skip_trivia(src, at2, to);
+                    if let Some(c2_close) = matching(src, at2, to, b'(', b')') {
+                        c2 = match parse_coordinate(&src[at2 + 1..c2_close], Some(ctx.named)) {
+                            Ok(p) => p,
+                            Err(error) => {
+                                issues.push(Issue::error(Span::new(at2, c2_close + 1), error));
+                                break;
+                            }
+                        };
+                        at2 = c2_close + 1;
+                    }
+                }
+                // The closing `..` before the target coordinate.
+                at2 = skip_trivia(src, at2, to);
+                if src[at2..to].starts_with("..") {
+                    at2 += 2;
+                    at2 = skip_trivia(src, at2, to);
+                }
+                if let Some(t_close) = matching(src, at2, to, b'(', b')') {
+                    let target = match parse_coordinate(&src[at2 + 1..t_close], Some(ctx.named)) {
+                        Ok(p) => p,
+                        Err(error) => {
+                            issues.push(Issue::error(Span::new(at2, t_close + 1), error));
+                            break;
+                        }
+                    };
+                    builder.cmds.push(PathCmd::Cubic { c1, c2, to: target });
+                    builder.current = Some(target);
+                    builder.base = Some(target);
+                    builder.local = Some(target);
+                    builder.local_base = Some(target);
+                    builder.touch(target);
+                    at = t_close + 1;
+                    continue;
+                }
+            }
+            at = after_word;
+            continue;
         }
         if byte == b';' {
             break;
@@ -286,9 +375,76 @@ pub fn build_path(
                 flush(&mut builder, ctx, &mut elements);
             }
             "to" | "edge" => {
+                // Consume any following `[...]` option lists: they set the `to`-curve
+                // state (`bend`, `out`, `in`, `looseness`, ...) used below.
+                let mut cursor = after;
+                while cursor < to {
+                    cursor = skip_trivia(src, cursor, to);
+                    if !src[cursor..to].starts_with('[') {
+                        break;
+                    }
+                    let Some(close) = matching(src, cursor, to, b'[', b']') else {
+                        issues.push(Issue::error(
+                            Span::new(cursor, to),
+                            "unterminated option list",
+                        ));
+                        break;
+                    };
+                    let list = parse_option_list_raw(&src[cursor..=close], cursor);
+                    ctx.state.apply(&list, issues);
+                    cursor = close + 1;
+                }
+                // Expect a `(target)` coordinate and draw a (possibly curved) segment
+                // from the current point to it.
+                let cursor = skip_trivia(src, cursor, to);
+                if cursor < to && src.as_bytes().get(cursor) == Some(&b'(') {
+                    if let Some(close) = matching(src, cursor, to, b'(', b')') {
+                        let inner = &src[cursor + 1..close];
+                        if let Ok(target) = parse_coordinate(inner, Some(ctx.named)) {
+                            if let Some(current) = builder.current {
+                                let transform = ctx.state.transform;
+                                let local_delta = transform
+                                    .inverse_apply_vector(target - current)
+                                    .unwrap_or(target - current);
+                                let base_heading = local_delta.y.atan2(local_delta.x).to_degrees();
+                                let curve = resolve_to_curve(ToCurveOptions {
+                                    out: ctx.state.to_out,
+                                    in_angle: ctx.state.to_in,
+                                    looseness: ctx.state.to_looseness,
+                                    out_looseness: ctx.state.to_out_looseness,
+                                    in_looseness: ctx.state.to_in_looseness,
+                                    bend_signed: ctx.state.to_bend,
+                                    base_heading,
+                                    relative: ctx.state.to_relative,
+                                    has_explicit_in_or_out: ctx.state.to_out.is_some()
+                                        || ctx.state.to_in.is_some(),
+                                    has_bend_direction: ctx.state.to_bend.is_some(),
+                                    bend_direction: None,
+                                });
+                                if let Some((c1, c2, end)) =
+                                    to_curve_controls(current, target, &transform, &curve)
+                                {
+                                    builder.cmds.push(PathCmd::Cubic { c1, c2, to: end });
+                                    builder.current = Some(end);
+                                    builder.base = Some(end);
+                                    builder.local = Some(end);
+                                    builder.local_base = Some(end);
+                                    builder.touch(end);
+                                } else {
+                                    builder.advance(target);
+                                }
+                            } else {
+                                // No current point: start a fresh subpath at the target.
+                                builder.advance(target);
+                            }
+                            at = close + 1;
+                            continue;
+                        }
+                    }
+                }
                 issues.push(Issue::warning(
                     Span::new(at, after),
-                    format!("`{word}` is drawn as a straight line (bends are not supported yet)"),
+                    format!("`{word}` needs a coordinate target"),
                 ));
                 at = skip_optional_groups(src, after, to, issues);
                 continue;

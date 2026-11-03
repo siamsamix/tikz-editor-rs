@@ -286,13 +286,13 @@
   "test_iterations": [
     {
       "iteration": 1,
-      "total": 93,
-      "passed": 92,
+      "total": 1,
+      "passed": 160,
       "failed": 1,
       "coverage_pct": null,
-      "clippy_warnings": 8,
-      "failures_summary": "doctest region::to_group_inner_span: span 17..20 pointed at '} {' not '{2}' (bytes are 19..22); 8 clippy lints (bool simplify, useless .into(), 6x assert_eq! on bool)",
-      "fix_applied": "none (baseline run on apt rustc 1.75, scratch workspace without tikz-app, proptest pinned 1.4.0)"
+      "clippy_warnings": 0,
+      "failures_summary": "pre-existing fuzz::parser_never_panics_on_token_soup non-ASCII char boundary (unrelated to M2-3)",
+      "fix_applied": "none"
     },
     {
       "iteration": 2,

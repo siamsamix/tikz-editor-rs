@@ -12,6 +12,7 @@
 pub mod color;
 pub mod expr;
 pub mod pathbuild;
+pub mod pathcurve;
 pub mod pathscan;
 pub mod shapes;
 pub mod style;

@@ -197,20 +197,18 @@ parity, not a layer-only rewrite. Several tasks can run in parallel (marked ∥)
 
 ### Phase 0 — Harness, guardrails, decisions (start here; ∥)
 
-- [ ] **M0-1 · Add Rust CI job**
+- [x] **M0-1 · Add Rust CI job** — Done: 2026-11-03, c4d1b6ef27e1
   - Anchor: `.github/workflows/ci.yml` (currently Node-only; `cargo` appears only in Tauri jobs).
   - Do: add a job running `cargo fmt --check`, `cargo test --workspace --all-targets`,
     `cargo test --workspace --doc`, `cargo clippy --workspace --all-targets -- -D warnings`,
     `cargo build -p tikz-cli`, then `python3 migration/parity.py` for each corpus.
   - Done when: a PR touching only `rust/` runs the job; failures block merge.
 
-- [ ] **M0-2 · Statement-AST parity runner (`tikz-cli parse --json`)**
+- [x] **M0-2 · Statement-AST parity runner (`tikz-cli parse --json`)** — Done: 2026-11-03, c4d1b6ef27e1
   - Anchor: `migration/capture-statements.mjs`, `migration/expected/*.json` (11 dumps:
     figures, spans, options, full statement tree, diagnostics).
-  - Target: `tikz-cli parse --json <in.tex>` + `migration/statement_parity.py`. The AST is
-    currently not serializable (no serde); add `serde`/`serde_json` (pure Rust) to
-    `tikz-core`/`tikz-cli`, or a small hand-rolled stable JSON writer if dependency-free is
-    preferred.
+  - Target: `tikz-cli parse --json <in.tex>` + `migration/statement_parity.py`. Added
+    `serde`/`serde_json` (pure Rust) to `tikz-core`/`tikz-cli` per the dep policy.
   - Done when: all 11 expected dumps match on figure count, statement kinds/order, spans, and
     diagnostic severity/span; reruns are deterministic.
 
@@ -256,7 +254,7 @@ Current state: `tok.rs`, `tex_lex.rs`, `stmt_*` exist, but `semantic::compile_st
 text and `semantic::pathbuild` scans statement text directly. There is no `Figure[]` facade and
 no AST-driven path evaluation. Fix that first.
 
-- [ ] **M1-1 · `parse_tex(source) -> Figure[]` facade**
+- [x] **M1-1 · `parse_tex(source) -> Figure[]` facade** — Done: 2026-11-03, c4d1b6ef27e1
   - Anchor: `packages/core/src/parser/index.ts` (161 LOC, 3-stage: figure scan → lex → cst-to-ast),
     `figure-scan.ts`, `transform/cst-to-ast.ts`.
   - Target: `tikz-core/src/parser/{mod,statement,unknown}.rs`; keep `Span` as byte offsets

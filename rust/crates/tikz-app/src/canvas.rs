@@ -143,7 +143,11 @@ fn paint_element(
     element: &SceneElement,
     extra_width: f32,
 ) {
-    let style = element.style();
+    let style = match element {
+        SceneElement::Path(path) => &path.style,
+        SceneElement::Ellipse(ellipse) => &ellipse.style,
+        SceneElement::Text(_) => return,
+    };
     let subpaths = flatten_element(element);
     if let Some(fill) = paint_color(style.fill) {
         let fill = fill.gamma_multiply(style.fill_opacity as f32);
@@ -188,7 +192,11 @@ fn paint_highlight(
     element: &SceneElement,
     color: Color32,
 ) {
-    let style = element.style();
+    let style = match element {
+        SceneElement::Path(path) => &path.style,
+        SceneElement::Ellipse(ellipse) => &ellipse.style,
+        SceneElement::Text(_) => return,
+    };
     let subpaths = flatten_element(element);
     let width = ((style.stroke_width * camera.zoom) as f32).max(1.0) + 6.0;
     let stroke = Stroke::new(width, color.gamma_multiply(0.25));

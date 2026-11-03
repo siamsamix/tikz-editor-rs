@@ -21,7 +21,7 @@
 //! assert_eq!(hit_test(&scene, Vec2::new(5.0, 2.0), 0.0), None);
 //! ```
 
-use crate::scene::{PathCmd, Scene, SceneElement, SceneEllipse, ScenePath};
+use crate::scene::{Paint, PathCmd, Scene, SceneElement, SceneEllipse, ScenePath};
 use crate::units::Vec2;
 
 /// Samples per cubic segment when flattening for picking.
@@ -264,6 +264,7 @@ pub fn flatten_element(element: &SceneElement) -> Vec<Vec<Vec2>> {
     match element {
         SceneElement::Path(path) => flatten(&path.cmds),
         SceneElement::Ellipse(ellipse) => vec![ellipse_points(ellipse)],
+        SceneElement::Text(_) => vec![],
     }
 }
 
@@ -316,12 +317,21 @@ pub fn hit_test(scene: &Scene, point: Vec2, tolerance: f64) -> Option<usize> {
         .enumerate()
         .rev()
         .find_map(|(index, element)| {
-            let style = element.style();
-            if style.stroke == crate::scene::Paint::None {
+            let (stroke_width, drawable) = match element {
+                SceneElement::Path(path) => {
+                    (path.style.stroke_width, path.style.stroke != Paint::None)
+                }
+                SceneElement::Ellipse(ellipse) => (
+                    ellipse.style.stroke_width,
+                    ellipse.style.stroke != Paint::None,
+                ),
+                SceneElement::Text(_) => return None,
+            };
+            if !drawable {
                 return None;
             }
             let distance = distance_to_element(point, element);
-            (distance <= style.stroke_width / 2.0 + tolerance).then_some(index)
+            (distance <= stroke_width / 2.0 + tolerance).then_some(index)
         })
 }
 

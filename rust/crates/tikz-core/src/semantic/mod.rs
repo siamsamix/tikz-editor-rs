@@ -20,8 +20,9 @@ pub mod transform;
 use crate::figure_scan::scan_tikz_figures;
 use crate::ids::path_statement_id;
 use crate::options::parse_option_list_raw;
-use crate::scene::{Paint, Scene};
+use crate::scene::{Paint, Scene, SceneElement, SceneText};
 use crate::span::Span;
+use crate::units::Vec2;
 
 pub use style::{Issue, Severity};
 
@@ -111,6 +112,12 @@ fn compile_statement(
         return; // only whitespace/comments before the `;`
     }
     let (command, after) = read_command(source, at, to);
+
+    // `\node` statements build text elements instead of paths.
+    if command == "node" {
+        return compile_node_statement(source, figure_state, index, after, to, scene, issues);
+    }
+
     let mut state = figure_state.clone();
     match command {
         "draw" | "path" => {}
@@ -158,6 +165,141 @@ fn compile_statement(
     scene
         .elements
         .extend(pathbuild::build_path(&mut ctx, cursor, to, issues));
+}
+
+/// Compile one `\node … ;` statement into a [`SceneText`] element.
+///
+/// Supported subset: `[options]`, a leading named coordinate `(name)` or a
+/// placement `(x,y)`, an optional `at (x,y)`, and a trailing `{text}` group.
+/// Unsupported constructs inside a node produce issues but never drop the
+/// statement silently.
+fn compile_node_statement(
+    source: &str,
+    figure_state: &StyleState,
+    index: usize,
+    from: usize,
+    to: usize,
+    scene: &mut Scene,
+    issues: &mut Vec<Issue>,
+) {
+    let mut cursor = skip_trivia(source, from, to);
+    let mut state = figure_state.clone();
+
+    // Options `[…]`.
+    if source[cursor..to].starts_with('[') {
+        let Some(close) = matching(source, cursor, to, b'[', b']') else {
+            issues.push(Issue::error(
+                Span::new(cursor, to),
+                "unterminated option list",
+            ));
+            return;
+        };
+        let list = parse_option_list_raw(&source[cursor..=close], cursor);
+        state.apply(&list, issues);
+        cursor = close + 1;
+    }
+
+    // Read placement: optional `(name)` / `(x,y)` then optional `at (x,y)`.
+    let mut center = Vec2::new(0.0, 0.0);
+    let mut center_set = false;
+    while cursor < to {
+        cursor = skip_trivia(source, cursor, to);
+        let byte = source.as_bytes()[cursor];
+        if byte == b'{' {
+            // The trailing `{text}` group is handled below; stop scanning here.
+            break;
+        }
+        if byte == b'(' {
+            let Some(close) = matching(source, cursor, to, b'(', b')') else {
+                issues.push(Issue::error(
+                    Span::new(cursor, to),
+                    "unterminated coordinate",
+                ));
+                return;
+            };
+            let inner = &source[cursor + 1..close];
+            match pathscan::parse_coordinate(inner) {
+                Ok(point) if !center_set => {
+                    center = point;
+                    center_set = true;
+                }
+                Err(_) => {
+                    // Not a coordinate: treat as a named coordinate reference,
+                    // resolved later in Phase 2.
+                }
+                _ => {}
+            }
+            cursor = close + 1;
+            continue;
+        }
+        let (word, after) = pathscan::read_word(source, cursor, to);
+        if word.is_empty() {
+            cursor = (cursor + 1).min(to);
+            continue;
+        }
+        if word == "at" {
+            cursor = after;
+            cursor = skip_trivia(source, cursor, to);
+            if source.as_bytes().get(cursor) == Some(&b'(') {
+                let Some(close) = matching(source, cursor, to, b'(', b')') else {
+                    issues.push(Issue::error(
+                        Span::new(cursor, to),
+                        "unterminated coordinate",
+                    ));
+                    return;
+                };
+                let inner = &source[cursor + 1..close];
+                match pathscan::parse_coordinate(inner) {
+                    Ok(point) => center = point,
+                    Err(_) => {}
+                }
+                cursor = close + 1;
+            }
+            continue;
+        }
+        // Anything else ends placement scanning; the rest is the text group.
+        break;
+    }
+
+    // Trailing `{text}` group.
+    let mut text = String::new();
+    cursor = skip_trivia(source, cursor, to);
+    if source.as_bytes().get(cursor) == Some(&b'{') {
+        let Some(close) = matching(source, cursor, to, b'{', b'}') else {
+            issues.push(Issue::error(
+                Span::new(cursor, to),
+                "unterminated node text",
+            ));
+            return;
+        };
+        text = source[cursor + 1..close].to_string();
+    }
+
+    // Build the text element. Named coordinates are not resolved yet
+    // (Phase 2); they render at the origin.
+    let text_style = state.text_style();
+    let lines: Vec<String> = text
+        .split('\\')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    let width = state.text_width(&text);
+    let height = state.text_height(&lines);
+    let half_w = width / 2.0;
+    let half_h = height / 2.0;
+    let bbox = Some((
+        Vec2::new(center.x - half_w, center.y - half_h),
+        Vec2::new(center.x + half_w, center.y + half_h),
+    ));
+    scene.elements.push(SceneElement::Text(SceneText {
+        source_id: format!("node:{index}"),
+        center,
+        lines,
+        style: text_style,
+        bbox,
+        width,
+        height,
+    }));
 }
 
 /// `\fill` with no colour paints the current colour; the port's base stroke
@@ -258,7 +400,7 @@ fn matching(src: &str, open: usize, end: usize, lo: u8, hi: u8) -> Option<usize>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scene::{PathCmd, SceneElement};
+    use crate::scene::{PathCmd, SceneElement, SceneText};
 
     fn scene_of(source: &str) -> (Scene, Vec<Issue>) {
         compile_scene(source).unwrap_or_else(|issues| panic!("compile failed: {issues:?}"))
@@ -336,11 +478,56 @@ mod tests {
     #[test]
     fn unsupported_statements_warn_but_keep_the_figure() {
         let (scene, issues) = scene_of(
-            "\\begin{tikzpicture}\\node at (0,0) {A};\\draw (0,0) -- (1,1);\\end{tikzpicture}",
+            "\\begin{tikzpicture}\\unknowncmd at (0,0);\\draw (0,0) -- (1,1);\\end{tikzpicture}",
         );
         assert_eq!(scene.len(), 1);
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn node_statement_produces_text_element() {
+        let (scene, issues) =
+            scene_of("\\begin{tikzpicture}\\node[draw] at (1,2) {Hello};\\end{tikzpicture}");
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(scene.len(), 1);
+        match &scene.elements[0] {
+            SceneElement::Text(text) => {
+                assert_eq!(text.source_id, "node:0");
+                assert_eq!(text.lines, vec!["Hello"]);
+                assert!((text.center.x - 28.4527559055).abs() < 1e-9);
+                assert!((text.center.y - 2.0 * crate::units::CM_TO_PT).abs() < 1e-9);
+            }
+            other => panic!("expected a text element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn node_text_splits_on_backslash() {
+        let (scene, issues) =
+            scene_of("\\begin{tikzpicture}\\node {first line\\\\second line};\\end{tikzpicture}");
+        assert!(issues.is_empty(), "{issues:?}");
+        match &scene.elements[0] {
+            SceneElement::Text(text) => {
+                assert_eq!(text.lines, vec!["first line", "second line"]);
+            }
+            other => panic!("expected a text element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn named_coordinate_node_renders_at_origin() {
+        let (scene, issues) =
+            scene_of("\\begin{tikzpicture}\\node (A) at (0,0) {A};\\end{tikzpicture}");
+        assert!(issues.is_empty(), "{issues:?}");
+        match &scene.elements[0] {
+            SceneElement::Text(text) => {
+                assert_eq!(text.lines, vec!["A"]);
+                assert!((text.center.x).abs() < 1e-9);
+                assert!((text.center.y).abs() < 1e-9);
+            }
+            other => panic!("expected a text element, got {other:?}"),
+        }
     }
 
     #[test]

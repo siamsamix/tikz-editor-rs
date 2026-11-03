@@ -14,7 +14,10 @@
 //! * a `circle` op is written as `<path>` with two arcs, an `ellipse` op as
 //!   an `<ellipse>` element (verified in `grid.svg`).
 
-use crate::scene::{PathCmd, PathStyle, Scene, SceneElement, SceneEllipse, ScenePath, SceneText, TextAlign, TextStyle};
+use crate::scene::{
+    FontFamily, PathCmd, PathStyle, Scene, SceneElement, SceneEllipse, ScenePath, SceneText,
+    TextAlign,
+};
 use crate::svg_numbers::fmt_num;
 
 /// Padding added around the drawing on each side, in pt.
@@ -34,7 +37,11 @@ impl ViewBox {
         let mut acc: Option<(f64, f64, f64, f64)> = None;
         for element in &scene.elements {
             let (lo, hi) = element_bounds(element);
-            let half = element.style().half_stroke();
+            let half = match element {
+                SceneElement::Path(path) => path.style.half_stroke(),
+                SceneElement::Ellipse(ellipse) => ellipse.style.half_stroke(),
+                SceneElement::Text(_) => 0.0,
+            };
             let (x0, y0) = (lo.x - half, lo.y - half);
             let (x1, y1) = (hi.x + half, hi.y + half);
             acc = Some(match acc {
@@ -68,6 +75,17 @@ fn element_bounds(element: &SceneElement) -> (crate::units::Vec2, crate::units::
     match element {
         SceneElement::Path(path) => path_bbox(path),
         SceneElement::Ellipse(ellipse) => ellipse.bounds(),
+        SceneElement::Text(text) => {
+            if let Some((lo, hi)) = text.bbox {
+                return (lo, hi);
+            }
+            let half_w = text.width / 2.0;
+            let half_h = text.height / 2.0;
+            (
+                crate::units::Vec2::new(text.center.x - half_w, text.center.y - half_h),
+                crate::units::Vec2::new(text.center.x + half_w, text.center.y + half_h),
+            )
+        }
     }
 }
 
@@ -125,6 +143,7 @@ pub fn emit_svg(scene: &Scene) -> String {
         match element {
             SceneElement::Path(path) => out.push_str(&emit_path(path, vb.flip_k())),
             SceneElement::Ellipse(ellipse) => out.push_str(&emit_ellipse(ellipse, vb.flip_k())),
+            SceneElement::Text(text) => out.push_str(&emit_text(text, vb.flip_k())),
         }
     }
     out.push_str("</svg>");
@@ -196,6 +215,71 @@ fn emit_ellipse(ellipse: &SceneEllipse, flip_k: f64) -> String {
         fmt_num(ellipse.ry),
         style_attrs(&ellipse.style)
     )
+}
+
+/// Emit a text element (`<text>` with `<tspan>` lines).
+///
+/// Matches the legacy emitter shape (`packages/core/src/svg/emit.ts`):
+/// `x`/`y` are the anchor point (y up → SVG y-flip), `text-anchor` selects
+/// horizontal alignment, `dominant-baseline="middle"` vertically centers on
+/// `y`, and each line is a `<tspan>` with `1.15em` steps.
+fn emit_text(text: &SceneText, flip_k: f64) -> String {
+    let anchor = text.center.x;
+    let text_anchor = match text.style.text_align {
+        TextAlign::Left => "start",
+        TextAlign::Center => "middle",
+        TextAlign::Right => "end",
+    };
+    let font_family = match text.style.font_family {
+        FontFamily::Serif => "Latin Modern Roman, CMU Serif, Times New Roman, serif",
+        FontFamily::Sans => "Latin Modern Sans, CMU Sans Serif, Helvetica, Arial, sans-serif",
+        FontFamily::Mono => "Latin Modern Mono, CMU Typewriter Text, Courier New, monospace",
+    };
+    let mut attrs = Vec::new();
+    attrs.push(format!(
+        r#"data-source-id="{}" x="{}" y="{}" font-family="{}" font-size="{:.4}" fill="{}" fill-opacity="{:.4}" text-anchor="{}" dominant-baseline="middle" xml:space="preserve""#,
+        escape_attr(&text.source_id),
+        fmt_num(anchor),
+        fmt_num(flip_k - text.center.y),
+        font_family,
+        text.style.font_size,
+        text.style.fill.as_attr(),
+        text.style.fill_opacity,
+        text_anchor
+    ));
+    if text.style.font_weight {
+        attrs.push(r#"font-weight="700""#.to_string());
+    }
+    if text.style.font_style {
+        attrs.push(r#"font-style="italic""#.to_string());
+    }
+    let mut lines = String::new();
+    let n = text.lines.len() as f64;
+    if n > 0.0 {
+        let first_dy = -((n - 1.0) * 1.15) / 2.0;
+        lines.push_str(&format!(
+            r#"<tspan x="{}" y="{}" dy="{:.4}em">{}</tspan>"#,
+            fmt_num(anchor),
+            fmt_num(flip_k - text.center.y),
+            first_dy,
+            escape_text(&text.lines[0])
+        ));
+        for line in text.lines.iter().skip(1) {
+            lines.push_str(&format!(
+                r#"<tspan x="{}" dy="1.15em">{}</tspan>"#,
+                fmt_num(anchor),
+                escape_text(line)
+            ));
+        }
+    }
+    format!(r#"<text {}>{}</text>"#, attrs.join(" "), lines)
+}
+
+/// Escape text content: `& < >`.
+fn escape_text(raw: &str) -> String {
+    raw.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Paint attributes in the one legacy order (blueprint row 24).

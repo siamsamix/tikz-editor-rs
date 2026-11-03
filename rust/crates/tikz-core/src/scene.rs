@@ -157,6 +157,10 @@ pub struct SceneText {
     pub style: TextStyle,
     /// Legacy-style conservative bounds of the text box.
     pub bbox: Option<(Vec2, Vec2)>,
+    /// Width of the text box in pt.
+    pub width: f64,
+    /// Height of the text box in pt.
+    pub height: f64,
 }
 /// One path command in canvas space.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -281,7 +285,7 @@ impl Scene {
     pub fn paths(&self) -> impl Iterator<Item = &ScenePath> {
         self.elements.iter().filter_map(|element| match element {
             SceneElement::Path(path) => Some(path),
-            SceneElement::Ellipse(_) => None,
+            SceneElement::Ellipse(_) | SceneElement::Text(_) => None,
         })
     }
 

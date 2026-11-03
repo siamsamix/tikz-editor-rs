@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 
 use egui::{Color32, RichText};
+use tikz_core::scene::{PathStyle, SceneElement};
 use tikz_core::units::Vec2;
 
 use crate::camera::Camera;
@@ -28,6 +29,16 @@ fn element_kind(element: &tikz_core::scene::SceneElement) -> &'static str {
     match element {
         tikz_core::scene::SceneElement::Path(_) => "path",
         tikz_core::scene::SceneElement::Ellipse(_) => "ellipse",
+        tikz_core::scene::SceneElement::Text(_) => "text",
+    }
+}
+
+/// Fill attribute of a scene element (text elements carry their own style).
+fn element_fill(element: &tikz_core::scene::SceneElement) -> String {
+    match element {
+        tikz_core::scene::SceneElement::Path(path) => path.style.fill.as_attr(),
+        tikz_core::scene::SceneElement::Ellipse(ellipse) => ellipse.style.fill.as_attr(),
+        tikz_core::scene::SceneElement::Text(text) => text.style.fill.as_attr(),
     }
 }
 
@@ -354,7 +365,11 @@ impl TikzApp {
                                 ui.end_row();
 
                                 ui.label("Stroke");
-                                let style = element.style();
+                                let style = match element {
+                                    SceneElement::Path(path) => &path.style,
+                                    SceneElement::Ellipse(ellipse) => &ellipse.style,
+                                    SceneElement::Text(_) => &PathStyle::default(),
+                                };
                                 ui.label(
                                     RichText::new(format!(
                                         "{} / {:.2} pt",
@@ -366,7 +381,7 @@ impl TikzApp {
                                 ui.end_row();
 
                                 ui.label("Fill");
-                                ui.label(RichText::new(element.style().fill.as_attr()).monospace());
+                                ui.label(RichText::new(element_fill(element)).monospace());
                                 ui.end_row();
 
                                 ui.label("Dash");

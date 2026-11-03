@@ -23,7 +23,7 @@
 //! ```
 
 use crate::options::{OptionEntry, OptionListAst};
-use crate::scene::{Paint, PathStyle, FontFamily, TextStyle, TextAlign};
+use crate::scene::{FontFamily, Paint, PathStyle, TextAlign, TextStyle};
 use crate::semantic::color::resolve_color;
 use crate::semantic::expr::{eval_len, eval_number, Unit};
 use crate::semantic::transform::Transform;
@@ -409,30 +409,32 @@ fn clamp01(value: Result<f64, String>) -> Option<f64> {
         .map(|v| v.clamp(0.0, 1.0))
 }
 
-/// Resolve the node text style from this state.
-pub fn text_style(&self) -> TextStyle {
-    TextStyle {
-        fill: self.text_fill,
-        fill_opacity: self.text_opacity,
-        font_family: self.font_family,
-        font_size: self.font_size,
-        font_weight: self.font_weight,
-        font_style: self.font_style,
-        text_align: self.text_align,
+impl StyleState {
+    /// Resolve the node text style from this state.
+    pub fn text_style(&self) -> TextStyle {
+        TextStyle {
+            fill: self.text_fill,
+            fill_opacity: self.text_opacity,
+            font_family: self.font_family,
+            font_size: self.font_size,
+            font_weight: self.font_weight,
+            font_style: self.font_style,
+            text_align: self.text_align,
+        }
     }
-}
 
-/// Estimated width of a single-line text in pt (legacy `charWidth = 0.7·fontSize`).
-pub fn text_width(&self, text: &str) -> f64 {
-    text.len() as f64 * 0.7 * self.font_size
-}
-
-/// Estimated height of wrapped lines in pt (legacy `lineHeight = 1.05·fontSize`).
-pub fn text_height(&self, lines: &[String]) -> f64 {
-    if lines.is_empty() {
-        return 0.0;
+    /// Estimated width of a single-line text in pt (legacy `charWidth = 0.7·fontSize`).
+    pub fn text_width(&self, text: &str) -> f64 {
+        text.len() as f64 * 0.7 * self.font_size
     }
-    lines.len() as f64 * 1.05 * self.font_size
+
+    /// Estimated height of wrapped lines in pt (legacy `lineHeight = 1.05·fontSize`).
+    pub fn text_height(&self, lines: &[String]) -> f64 {
+        if lines.is_empty() {
+            return 0.0;
+        }
+        lines.len() as f64 * 1.05 * self.font_size
+    }
 }
 
 /// Evaluate a length and report whether the source carried an explicit unit.

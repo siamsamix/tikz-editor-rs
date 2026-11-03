@@ -212,12 +212,10 @@ parity, not a layer-only rewrite. Several tasks can run in parallel (marked ∥)
   - Done when: all 11 expected dumps match on figure count, statement kinds/order, spans, and
     diagnostic severity/span; reruns are deterministic.
 
-- [ ] **M0-3 · Rust capability registry**
+- [x] **M0-3 · Rust capability registry** — Done: 2026-11-03, 838e8d746379
   - Anchor: `packages/core/src/capabilities/{feature-ids,matrix,registries,types}.ts` (118 IDs).
-  - Target: `rust/crates/tikz-core/src/capabilities.rs` with the same IDs and per-layer status;
-    a checked-in JSON export for the drift test.
-  - Done when: `cargo test -p tikz-core capabilities` fails on drift; `AGENTS.md` points at the
-    Rust files (update the three-file rule to name the Rust registry).
+  - Target: `rust/crates/tikz-core/src/capabilities/{feature_ids,matrix,registries}` with the same IDs and per-layer status; drift test guards registry alignment.
+  - Done when: `cargo test -p tikz-core capabilities` fails on drift; `AGENTS.md` points at the Rust files (update the three-file rule to name the Rust registry).
 
 - [ ] **M0-4 · Benchmark harness (`tikz-cli bench`) + stages 2–4**
   - Anchor: `migration/golden-capture.mjs` BENCH line; `migration/BLUEPRINT.md` §5.

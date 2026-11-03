@@ -102,8 +102,7 @@ mod drift_tests {
         let matrix: std::collections::HashMap<&str, CapabilityRow> =
             capability_matrix().into_iter().collect();
         for (layer, registry) in all_registries() {
-            let registry_set: std::collections::HashSet<&str> =
-                registry.iter().copied().collect();
+            let registry_set: std::collections::HashSet<&str> = registry.iter().copied().collect();
             for id in FEATURE_IDS {
                 let row = matrix.get(id).unwrap();
                 let supported = status_for(layer, row).is_supported();

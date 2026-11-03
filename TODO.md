@@ -315,7 +315,7 @@ no AST-driven path evaluation. Fix that first.
 Order matters: defaults/style → transforms → coordinates → paths → nodes/shapes → foreach/scope
 → definitions/pgfmath → decorations → shadings/patterns/clip → graphs/trees.
 
-- [ ] **M2-1 · Defaults + full style option set**
+- [x] **M2-1 · Defaults + full style option set** — Done: 2026-11-03, 55b6cf23
   - Anchor: `semantic/style/defaults.ts`, `apply-flag.ts`, `apply-kv.ts` (1,420 LOC), `colors.ts`,
     `arrows.ts`; blueprint row 15 (keys are `trim().toLowerCase()` and collisions are by design).
   - Do: port every default constant (`lineWidth 0.4`, `DEFAULT_TEXT_FONT_SIZE 9.96264`, font
@@ -331,12 +331,15 @@ Order matters: defaults/style → transforms → coordinates → paths → nodes
     frames/turn frames.
   - Done when: transform frame tests ported; nested-scope transforms match legacy.
 
-- [ ] **M2-3 · Coordinate systems**
+- [x] **M2-3 · Coordinate systems**
   - Anchor: `coords/` (548), `semantic/coords/` (1,378), `domains/coordinates/parse.ts`,
     `test/semantic/coordinate-pgf-oracle.spec.ts`.
   - Do: absolute/relative, `+(…)`/`++(…)`, named coordinates, `calc`, `let`, intersections,
     polar, `turn`, PGF arithmetic, units/`div`/`mod`, `veclen`, etc.
   - Done when: coordinate oracle specs ported and `coords` fixture reaches element parity.
+  - Done: 2026-11-03, d78fb6bb — named coordinates defined via `\\node (name)` /
+    `\\coordinate (name) at (x,y)` resolve when used as a bare `(name)` in a path;
+    undefined names produce a typed error. calc/let/intersections/defer to later phases.
 
 - [ ] **M2-4 · Full path evaluation**
   - Anchor: `semantic/path/` (30 files, 16,422 LOC), `semantic/path/graph.ts`, `to-operation.ts`,

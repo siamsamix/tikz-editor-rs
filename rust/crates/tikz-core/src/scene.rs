@@ -92,6 +92,72 @@ impl PathStyle {
     }
 }
 
+/// Resolved text style of one scene text element.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextStyle {
+    /// Fill paint (defaults to `black`).
+    pub fill: Paint,
+    /// `fill-opacity`.
+    pub fill_opacity: f64,
+    /// Font family.
+    pub font_family: FontFamily,
+    /// Font size in pt.
+    pub font_size: f64,
+    /// Bold weight.
+    pub font_weight: bool,
+    /// Italic style.
+    pub font_style: bool,
+    /// Horizontal alignment.
+    pub text_align: TextAlign,
+}
+
+/// Font family of a text element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FontFamily {
+    Serif,
+    Sans,
+    Mono,
+}
+
+/// Horizontal text alignment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        Self {
+            fill: Paint::Black,
+            fill_opacity: 1.0,
+            font_family: FontFamily::Serif,
+            font_size: crate::units::DEFAULT_TEXT_FONT_SIZE_PT,
+            font_weight: false,
+            font_style: false,
+            text_align: TextAlign::Center,
+        }
+    }
+}
+
+/// Default font size in pt (legacy `DEFAULT_TEXT_FONT_SIZE = 9.96264`).
+pub const DEFAULT_TEXT_FONT_SIZE_PT: f64 = 9.96264;
+
+/// One standalone text element (a `\node`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SceneText {
+    /// Identity hook, e.g. `node:0` (`data-source-id` in the SVG).
+    pub source_id: String,
+    /// Center of the node box in canvas space (y up).
+    pub center: Vec2,
+    /// Line-wrapped text lines, in order.
+    pub lines: Vec<String>,
+    /// Text style.
+    pub style: TextStyle,
+    /// Legacy-style conservative bounds of the text box.
+    pub bbox: Option<(Vec2, Vec2)>,
+}
 /// One path command in canvas space.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PathCmd {
@@ -188,22 +254,17 @@ pub enum SceneElement {
     Path(ScenePath),
     /// A standalone ellipse element.
     Ellipse(SceneEllipse),
+    /// A text element (`\node`).
+    Text(SceneText),
 }
 
 impl SceneElement {
-    /// Identity hook shared by both element kinds.
+    /// Identity hook shared by all element kinds.
     pub fn source_id(&self) -> &str {
         match self {
             SceneElement::Path(path) => &path.source_id,
             SceneElement::Ellipse(ellipse) => &ellipse.source_id,
-        }
-    }
-
-    /// Paint state shared by both element kinds.
-    pub fn style(&self) -> &PathStyle {
-        match self {
-            SceneElement::Path(path) => &path.style,
-            SceneElement::Ellipse(ellipse) => &ellipse.style,
+            SceneElement::Text(text) => &text.source_id,
         }
     }
 }
@@ -289,16 +350,31 @@ impl Scene {
                     add(lo);
                     add(hi);
                 }
+                SceneElement::Text(text) => {
+                    if let Some((lo, hi)) = text.bbox {
+                        add(lo);
+                        add(hi);
+                    } else {
+                        let half_w = text.width / 2.0;
+                        let half_h = text.height / 2.0;
+                        add(Vec2::new(text.center.x - half_w, text.center.y - half_h));
+                        add(Vec2::new(text.center.x + half_w, text.center.y + half_h));
+                    }
+                }
             }
         }
         acc
     }
 
-    /// Largest stroke half-width over every element.
+    /// Largest stroke half-width over every path/ellipse element (text has none).
     pub fn max_half_stroke(&self) -> f64 {
         self.elements
             .iter()
-            .map(|e| e.style().half_stroke())
+            .filter_map(|e| match e {
+                SceneElement::Path(path) => Some(path.style.half_stroke()),
+                SceneElement::Ellipse(ellipse) => Some(ellipse.style.half_stroke()),
+                SceneElement::Text(_) => None,
+            })
             .fold(0.0, f64::max)
     }
 }

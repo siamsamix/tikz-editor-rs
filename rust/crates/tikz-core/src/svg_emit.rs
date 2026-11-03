@@ -14,7 +14,7 @@
 //! * a `circle` op is written as `<path>` with two arcs, an `ellipse` op as
 //!   an `<ellipse>` element (verified in `grid.svg`).
 
-use crate::scene::{PathCmd, PathStyle, Scene, SceneElement, SceneEllipse, ScenePath};
+use crate::scene::{PathCmd, PathStyle, Scene, SceneElement, SceneEllipse, ScenePath, SceneText, TextAlign, TextStyle};
 use crate::svg_numbers::fmt_num;
 
 /// Padding added around the drawing on each side, in pt.

@@ -12,7 +12,7 @@
 //! [`TokKind::StraySymbol`] and byte spans are documented as offsets into
 //! the original string.
 
-use crate::span::Span;
+use crate::span::{char_len_at, Span};
 
 /// Token classification mirroring the grammar's `@tokens` block.
 ///
@@ -410,12 +410,24 @@ fn number_end(bytes: &[u8], cursor: usize, dot: bool) -> usize {
 }
 
 /// End of an identifier run starting at `cursor`.
+///
+/// ASCII letters, digits, and a small set of punctuation continue the run.
+/// Any non-ASCII UTF-8 byte also continues the run so that accented/CJK/emoji
+/// text inside braces is treated as inert text rather than split into stray
+/// symbols.
 fn identifier_end(bytes: &[u8], cursor: usize) -> usize {
     let mut end = cursor;
-    while end < bytes.len()
-        && (bytes[end].is_ascii_alphanumeric() || matches!(bytes[end], b'-' | b'_' | b':' | b'@'))
-    {
-        end += 1;
+    while end < bytes.len() {
+        let b = bytes[end];
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'@') {
+            end += 1;
+        } else if b < 0x80 {
+            break;
+        } else {
+            // Multi-byte UTF-8 character: consume the whole character.
+            let ch_len = char_len_at(bytes, end);
+            end += ch_len;
+        }
     }
     end
 }

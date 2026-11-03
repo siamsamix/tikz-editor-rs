@@ -5,7 +5,7 @@
 //! UTF-8 continuation bytes can never match them, so byte-based scanning is
 //! character-safe and preserves the legacy code-unit offsets.
 
-use crate::span::Span;
+use crate::span::{char_len_at, Span};
 
 /// One control word or escaped control symbol, e.g. `\node` or `\\`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,7 +169,7 @@ pub fn skip_tex_verbatim(
             if byte == b'\n' || byte == b'\r' {
                 return Some(cursor);
             }
-            cursor += 1;
+            cursor += char_len_at(bytes, cursor);
             if byte == delimiter {
                 return Some(cursor);
             }

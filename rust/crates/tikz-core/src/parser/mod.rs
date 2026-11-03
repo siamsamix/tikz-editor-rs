@@ -27,7 +27,7 @@ use crate::options::{
     parse_option_list_raw, FlagEntry, KvEntry, OptionEntry, OptionListAst, UnknownEntry,
 };
 use crate::semantic::pathscan::matching;
-use crate::span::Span;
+use crate::span::{char_len_at, Span};
 use serde::Serialize;
 
 /// Commands whose bodies are path statements this slice parses into items.
@@ -379,7 +379,7 @@ fn split_statements(src: &str, from: usize, end: usize) -> Vec<(usize, usize, bo
                 continue;
             }
         }
-        at += 1;
+        at += char_len_at(bytes, at);
     }
     if skip_trivia(src, start, end) < end {
         out.push((skip_trivia(src, start, end), end, false));

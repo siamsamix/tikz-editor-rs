@@ -679,6 +679,35 @@ mod tests {
     }
 
     #[test]
+    fn node_text_with_accented_cjk_emoji_renders() {
+        let source = "\\begin{tikzpicture}\\node at (1,1) {Héllo 世界 😀};\\end{tikzpicture}";
+        let (scene, issues) = scene_of(source);
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(scene.len(), 1);
+        match &scene.elements[0] {
+            SceneElement::Text(text) => {
+                assert_eq!(text.lines, vec!["Héllo 世界 😀"]);
+            }
+            other => panic!("expected a text element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn node_text_with_escaped_braces_is_inert() {
+        let (scene, issues) =
+            scene_of("\\begin{tikzpicture}\\node at (1,1) {\\{a\\} b\\c};\\end{tikzpicture}");
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(scene.len(), 1);
+        match &scene.elements[0] {
+            SceneElement::Text(text) => {
+                // Text is preserved as-is; split('\\') divides on every backslash.
+                assert_eq!(text.lines, vec!["{a", "} b", "c"]);
+            }
+            other => panic!("expected a text element, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn named_coordinate_node_renders_at_origin() {
         let (scene, issues) =
             scene_of("\\begin{tikzpicture}\\node (A) at (0,0) {A};\\end{tikzpicture}");

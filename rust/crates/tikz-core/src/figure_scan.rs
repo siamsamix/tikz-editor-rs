@@ -11,7 +11,7 @@
 //! assert!(!figures[0].is_template);
 //! ```
 
-use crate::span::Span;
+use crate::span::{char_len_at, Span};
 use crate::tex_lex::*;
 
 /// Environments that are a TikZ picture.
@@ -56,8 +56,9 @@ pub fn scan_tikz_figures(source: &str) -> Vec<ScannedFigure> {
             continue;
         }
         let Some(command) = read_tex_control_sequence(source, cursor) else {
-            // Advance one character (byte) - multibyte chars are inert here.
-            cursor += 1;
+            // Advance by the character at this position so multibyte UTF-8
+            // characters are treated as inert text rather than split.
+            cursor += char_len_at(bytes, cursor);
             continue;
         };
         cursor = command.span.to;

@@ -292,7 +292,17 @@ no AST-driven path evaluation. Fix that first.
     (never silently dropped).
   - Done when: every kind maps to a Rust enum variant with spans/options, unknowns
     produce diagnostics, and behavior for slice-3 is unchanged (parity 3/3 still).
-    `UnknownStatement` + diagnostic (never a dropped statement).
+
+- [x] **M1-5 · UTF-8 / TeX text in source** — Done: 2026-11-03 (uncommitted)
+  - Anchor: `parser/tex-lexical.ts`, `shared.ts`; current `tok.rs` treats non-ASCII as
+    `StraySymbol` and documents UTF-8 as out of scope.
+  - Do: accept UTF-8 inside node text/braces as inert text; keep `\{`/`\}`/`\(`/`\)`
+    inert; preserve comment masking (including the 1-char lookbehind quirk at `\end`);
+    define byte↔UTF-16 span conversion for parity output (`Span::to_utf16` /
+    `Span::from_utf16` in `span.rs`).
+  - Done when: fixtures with accented/CJK/emoji node text parse with the same statement
+    spans as legacy (UTF-16 code units) and no character splitting; `tok.rs`, `figure_scan.rs`,
+    `split_statements`, and `tex_lex.rs` all advance by character length for non-ASCII bytes.
 
 - [ ] **M1-5 · UTF-8 / TeX text in source**
   - Anchor: `parser/tex-lexical.ts`, `shared.ts`; current `tok.rs` treats non-ASCII as

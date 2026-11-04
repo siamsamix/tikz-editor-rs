@@ -57,7 +57,7 @@ pub fn compile_with_warnings(source: &str) -> Result<(Scene, Vec<Diagnostic>), V
 /// ```
 /// use tikz_core::render::dimension_pt;
 /// assert_eq!(dimension_pt("2pt"), Ok(2.0));
-/// assert!(dimension_pt("1em").is_err());
+/// assert!(dimension_pt("1zz").is_err());
 /// ```
 pub fn dimension_pt(raw: &str) -> Result<f64, String> {
     expr::eval_len(raw, expr::Unit::Cm)

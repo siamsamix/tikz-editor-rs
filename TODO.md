@@ -297,7 +297,7 @@ no AST-driven path evaluation. Fix that first.
   - Anchor: `parser/tex-lexical.ts`, `shared.ts`; current `tok.rs` treats non-ASCII as
     `StraySymbol` and documents UTF-8 as out of scope.
   - Do: accept UTF-8 inside node text/braces as inert text; keep `\{`/`\}`/`\(`/`\)`
-    inert; preserve comment masking (including the 1-char lookbehind quirk at `\end`);
+    inert; preserve comment masking (including the 1-char lookbehind quirk at `\end`); 
     define byte↔UTF-16 span conversion for parity output (`Span::to_utf16` /
     `Span::from_utf16` in `span.rs`).
   - Done when: fixtures with accented/CJK/emoji node text parse with the same statement
@@ -406,11 +406,21 @@ Order matters: defaults/style → transforms → coordinates → paths → nodes
     `\definecolor`, macro defs/aliases/commands, `\if…`, library requirements, symbol resolver.
   - Done when: style/definition fixtures and specs pass; pics render.
 
-- [ ] **M2-9 · PGF math**
+- [x] **M2-9 · PGF math** — Done: 2026-11-03
   - Anchor: `semantic/pgfmath/` (983), `test/semantic/pgfmath.spec.ts`, blueprint row 25.
   - Do: full expression grammar/functions, `\pgfmathsetmacro`, seed/random commands, output
     formatting thresholds (`≤1e-12 → "0"`, near-integer → integer, else `toFixed(12)` stripped).
   - Done when: pgfmath oracle specs ported; foreach steps and dimensions consume the same values.
+  - Landed: `semantic/pgfmath/{mod,eval,lex,funcs,fmt,rng,runtime,state}.rs`; `semantic/expr.rs`
+    (`eval_len`/`eval_number`) now delegates to it, so dimensions, coordinates and macros share one
+    evaluator. `\pgfmathsetmacro/parse/setseed` run in the semantic driver; bound macros expand into
+    later statements (`\draw (\w cm,0)`); `rnd/rand/random` use a per-compile seed-1 runtime.
+    Diagnostics carry legacy codes via the new `Issue::code`. `Issue` spans of an expanded
+    statement point at the whole original statement.
+  - Hand-off: `\foreach` (M2-6) should call `pgfmath::evaluate_to_text` for `evaluate=` and step
+    values; general `\def`/`\newcommand`/conditionals (M2-8) should reuse `MacroBindings`.
+    Known gap: `em`/`ex` use the legacy 10pt/4.3pt fallback until font context exists; array
+    and quoted-string pgfmath forms warn `unsupported-syntax` (as legacy).
 
 - [ ] **M2-10 · Decorations**
   - Anchor: `semantic/decorations/engine.ts` (1,563), `test/semantic/decorations.spec.ts`.

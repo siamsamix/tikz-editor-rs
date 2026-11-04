@@ -48,6 +48,9 @@ const NON_PATH_COMMANDS: &[(&str, StatementKind)] = &[
     ("tikzset", StatementKind::TikzSet),
     ("colorlet", StatementKind::Colorlet),
     ("definecolor", StatementKind::DefineColor),
+    ("pgfmathsetmacro", StatementKind::PgfMath),
+    ("pgfmathparse", StatementKind::PgfMath),
+    ("pgfmathsetseed", StatementKind::PgfMath),
 ];
 
 /// The parsed document: one figure per `tikzpicture`-like environment.

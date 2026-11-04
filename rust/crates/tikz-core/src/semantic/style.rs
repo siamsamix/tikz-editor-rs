@@ -50,6 +50,8 @@ pub struct Issue {
     pub span: Span,
     /// Human-readable reason.
     pub message: String,
+    /// Stable machine-readable code (legacy diagnostic code), when one exists.
+    pub code: Option<String>,
 }
 
 impl Issue {
@@ -59,6 +61,7 @@ impl Issue {
             severity: Severity::Error,
             span,
             message: message.into(),
+            code: None,
         }
     }
 
@@ -68,7 +71,15 @@ impl Issue {
             severity: Severity::Warning,
             span,
             message: message.into(),
+            code: None,
         }
+    }
+
+    /// Attach a stable diagnostic code (e.g. `invalid-pgfmathparse:empty`).
+    #[must_use]
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.code = Some(code.into());
+        self
     }
 
     /// Whether this issue blocks rendering.

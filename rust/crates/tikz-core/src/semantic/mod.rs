@@ -14,15 +14,17 @@ pub mod expr;
 pub mod pathbuild;
 pub mod pathcurve;
 pub mod pathscan;
+pub mod pgfmath;
 pub mod shapes;
 pub mod style;
 pub mod transform;
 
 use crate::ids::path_statement_id;
 use crate::options::parse_option_list_raw;
-use crate::parser::{convert_parsed_option_list, parse_tex, StatementKind};
+use crate::parser::{convert_parsed_option_list, parse_tex, ParsedStatement, StatementKind};
 use crate::scene::{Paint, Scene, SceneElement, SceneText};
 use crate::semantic::pathscan::NamedCoordinates;
+use crate::semantic::pgfmath::state::{apply_statement, Arg, MacroBindings};
 use crate::span::Span;
 use crate::units::Vec2;
 
@@ -59,6 +61,10 @@ pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
         .map(convert_parsed_diagnostic)
         .collect();
     let mut scene = Scene::default();
+    // Seeded `rnd`/`random` runtime for this compile (fresh seed 1, restored
+    // on return) and the macros `\pgfmath…` statements bind.
+    let _pgfmath_runtime = pgfmath::runtime::install();
+    let mut math = MacroBindings::default();
     // Global statement counter: keeps `data-source-id`s unique across figures
     // and byte-identical to the legacy `path:N` scheme for a single figure.
     let mut next_statement_index = 0usize;
@@ -77,86 +83,43 @@ pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
             let index = next_statement_index;
             next_statement_index += 1;
 
-            match &stmt.kind {
-                StatementKind::Node => {
-                    let (_command, after) = read_command(source, stmt.span.from, stmt.span.to);
-                    compile_node_statement(
-                        source,
-                        &figure_state,
-                        &mut named,
-                        index,
-                        after,
-                        stmt.span.to,
-                        &mut scene,
-                        &mut issues,
-                    );
-                }
-                StatementKind::Path => match stmt.command.as_deref() {
-                    Some("coordinate") => {
-                        let (_command, after) = read_command(source, stmt.span.from, stmt.span.to);
-                        compile_coordinate_statement(
-                            source,
-                            &figure_state,
-                            &mut named,
-                            index,
-                            after,
-                            stmt.span.to,
-                            &mut issues,
-                        );
+            if stmt.kind == StatementKind::PgfMath {
+                compile_pgfmath_statement(source, stmt, &mut math, &mut issues);
+                continue;
+            }
+            // Statements that mention a control sequence bound by an earlier
+            // `\pgfmath…` statement are expanded and re-parsed first.
+            if !math.is_empty() {
+                if let Some(expanded) = expand_statement(source, stmt, &math) {
+                    let first_new = issues.len();
+                    for diagnostic in expanded.diagnostics {
+                        issues.push(convert_parsed_diagnostic(diagnostic));
                     }
-                    Some(command) => compile_statement_from_ast(
-                        source,
+                    compile_parsed_statement(
+                        &expanded.source,
+                        &expanded.statement,
                         &mut figure_state,
                         &mut named,
                         index,
-                        command,
-                        &stmt.items,
                         &mut scene,
                         &mut issues,
-                    ),
-                    None => {
-                        issues.push(Issue::error(
-                            stmt.span,
-                            "statement is missing its terminating `;`",
-                        ));
-                    }
-                },
-                StatementKind::Unknown => {
-                    // Diagnostic already pushed during parsing (see parse_statement).
-                }
-                StatementKind::Coordinate => {
-                    let (_command, after) = read_command(source, stmt.span.from, stmt.span.to);
-                    compile_coordinate_statement(
-                        source,
-                        &figure_state,
-                        &mut named,
-                        index,
-                        after,
-                        stmt.span.to,
-                        &mut issues,
                     );
-                }
-                StatementKind::Scope
-                | StatementKind::Foreach
-                | StatementKind::TikzStyle
-                | StatementKind::TikzSet
-                | StatementKind::TikzLibrary
-                | StatementKind::Pgfkeys
-                | StatementKind::PgfMath
-                | StatementKind::MacroDefinition
-                | StatementKind::MacroAlias
-                | StatementKind::MacroCommandDefinition
-                | StatementKind::Colorlet
-                | StatementKind::DefineColor => {
-                    issues.push(Issue::warning(
-                        stmt.span,
-                        format!(
-                            "`\\{}` statements are not supported yet",
-                            stmt.command.as_deref().unwrap_or(""),
-                        ),
-                    ));
+                    // The expanded text has no source offsets of its own.
+                    for issue in &mut issues[first_new..] {
+                        issue.span = stmt.span;
+                    }
+                    continue;
                 }
             }
+            compile_parsed_statement(
+                source,
+                stmt,
+                &mut figure_state,
+                &mut named,
+                index,
+                &mut scene,
+                &mut issues,
+            );
         }
     }
 
@@ -164,6 +127,98 @@ pub fn compile_scene(source: &str) -> Result<(Scene, Vec<Issue>), Vec<Issue>> {
         Err(issues)
     } else {
         Ok((scene, issues))
+    }
+}
+
+/// Compile one parsed statement (everything except `\pgfmath…`).
+fn compile_parsed_statement(
+    source: &str,
+    stmt: &ParsedStatement,
+    figure_state: &mut StyleState,
+    named: &mut NamedCoordinates,
+    index: usize,
+    scene: &mut Scene,
+    issues: &mut Vec<Issue>,
+) {
+    match &stmt.kind {
+        StatementKind::Node => {
+            let (_command, after) = read_command(source, stmt.span.from, stmt.span.to);
+            compile_node_statement(
+                source,
+                figure_state,
+                named,
+                index,
+                after,
+                stmt.span.to,
+                scene,
+                issues,
+            );
+        }
+        StatementKind::Path => match stmt.command.as_deref() {
+            Some("coordinate") => {
+                let (_command, after) = read_command(source, stmt.span.from, stmt.span.to);
+                compile_coordinate_statement(
+                    source,
+                    &*figure_state,
+                    named,
+                    index,
+                    after,
+                    stmt.span.to,
+                    issues,
+                );
+            }
+            Some(command) => compile_statement_from_ast(
+                source,
+                figure_state,
+                named,
+                index,
+                command,
+                &stmt.items,
+                scene,
+                issues,
+            ),
+            None => {
+                issues.push(Issue::error(
+                    stmt.span,
+                    "statement is missing its terminating `;`",
+                ));
+            }
+        },
+        StatementKind::Unknown => {
+            // Diagnostic already pushed during parsing (see parse_statement).
+        }
+        StatementKind::Coordinate => {
+            let (_command, after) = read_command(source, stmt.span.from, stmt.span.to);
+            compile_coordinate_statement(
+                source,
+                figure_state,
+                named,
+                index,
+                after,
+                stmt.span.to,
+                issues,
+            );
+        }
+        StatementKind::Scope
+        | StatementKind::Foreach
+        | StatementKind::TikzStyle
+        | StatementKind::TikzSet
+        | StatementKind::TikzLibrary
+        | StatementKind::Pgfkeys
+        | StatementKind::PgfMath
+        | StatementKind::MacroDefinition
+        | StatementKind::MacroAlias
+        | StatementKind::MacroCommandDefinition
+        | StatementKind::Colorlet
+        | StatementKind::DefineColor => {
+            issues.push(Issue::warning(
+                stmt.span,
+                format!(
+                    "`\\{}` statements are not supported yet",
+                    stmt.command.as_deref().unwrap_or(""),
+                ),
+            ));
+        }
     }
 }
 
@@ -484,6 +539,83 @@ fn compile_coordinate_statement(
     }
 }
 
+/// `\pgfmathsetmacro{\m}{expr}`, `\pgfmathparse{expr}`, `\pgfmathsetseed{expr}`.
+fn compile_pgfmath_statement(
+    source: &str,
+    stmt: &ParsedStatement,
+    math: &mut MacroBindings,
+    issues: &mut Vec<Issue>,
+) {
+    let Some(command) = stmt.command.as_deref() else {
+        return;
+    };
+    let (from, to) = (stmt.span.from, stmt.span.to);
+    let body_end = if to > from && source.as_bytes()[to - 1] == b';' {
+        to - 1
+    } else {
+        to
+    };
+    let (_name, after) = read_command(source, skip_trivia(source, from, body_end), body_end);
+    let mut args: Vec<Arg<'_>> = Vec::new();
+    let mut cursor = skip_trivia(source, after, body_end);
+    while cursor < body_end && source.as_bytes()[cursor] == b'{' {
+        let Some(close) = matching(source, cursor, body_end, b'{', b'}') else {
+            issues.push(Issue::error(
+                Span::new(cursor, body_end),
+                "unterminated `{` in pgfmath command",
+            ));
+            return;
+        };
+        args.push(Arg {
+            raw: &source[cursor + 1..close],
+            span: Span::new(cursor + 1, close),
+        });
+        cursor = skip_trivia(source, close + 1, body_end);
+    }
+    if args.is_empty() && cursor < body_end {
+        // A plain (unbraced) payload: `\pgfmathparse 1+2`.
+        args.push(Arg {
+            raw: source[cursor..body_end].trim(),
+            span: Span::new(cursor, body_end),
+        });
+    }
+    apply_statement(math, command, &args, stmt.span, issues);
+}
+
+/// A statement re-parsed after macro expansion.
+struct ExpandedStatement {
+    source: String,
+    statement: ParsedStatement,
+    diagnostics: Vec<crate::parser::ParsedDiagnostic>,
+}
+
+/// Substitute bound control sequences into one statement and re-parse it.
+///
+/// `None` when nothing changed (or the expansion no longer parses as exactly
+/// one statement), in which case the original statement is compiled as is.
+fn expand_statement(
+    source: &str,
+    stmt: &ParsedStatement,
+    math: &MacroBindings,
+) -> Option<ExpandedStatement> {
+    let original = &source[stmt.span.from..stmt.span.to];
+    let expanded = math.expand(original);
+    if expanded == original {
+        return None;
+    }
+    let wrapped = format!("\\begin{{tikzpicture}}{expanded}\\end{{tikzpicture}}");
+    let document = parse_tex(&wrapped);
+    let figure = document.figures.first()?;
+    let [statement] = figure.statements.as_slice() else {
+        return None;
+    };
+    Some(ExpandedStatement {
+        statement: statement.clone(),
+        diagnostics: document.diagnostics,
+        source: wrapped,
+    })
+}
+
 /// Convert a parser [`ParsedDiagnostic`] into a semantic [`Issue`].
 fn convert_parsed_diagnostic(d: crate::parser::ParsedDiagnostic) -> Issue {
     match d.severity.as_str() {
@@ -762,6 +894,109 @@ mod tests {
         let issues = compile_scene("\\begin{tikzpicture}\\draw (A) -- (B);\\end{tikzpicture}")
             .expect_err("undefined named coordinates must fail");
         assert!(issues.iter().any(|issue| issue.severity == Severity::Error));
+    }
+
+    fn texts(scene: &Scene) -> Vec<String> {
+        scene
+            .elements
+            .iter()
+            .filter_map(|e| match e {
+                SceneElement::Text(t) => Some(t.lines.join("\\")),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pgfmath_commands_feed_node_text() {
+        let (scene, issues) = scene_of(
+            "\\begin{tikzpicture}\\pgfmathsetseed{7};\\pgfmathparse{1<2 ? 9 : 4};\\pgfmathsetmacro{\\m}{2+3};\\node at (0,0) {\\pgfmathresult/\\m};\\end{tikzpicture}",
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(texts(&scene), vec!["9/5"]);
+    }
+
+    #[test]
+    fn pgfmath_macros_expand_inside_dimensions() {
+        let cm = crate::units::CM_TO_PT;
+        let (scene, issues) = scene_of(
+            "\\begin{tikzpicture}\\pgfmathsetmacro{\\rm}{3};\\pgfmathsetmacro{\\rc}{\\rm *2/3};\\draw (0,0) -- (\\rm cm,\\rc cm);\\end{tikzpicture}",
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(
+            only_path(&scene).cmds,
+            vec![
+                PathCmd::Move(Vec2::new(0.0, 0.0)),
+                PathCmd::Line(Vec2::new(3.0 * cm, 2.0 * cm)),
+            ]
+        );
+    }
+
+    #[test]
+    fn pgfmath_functions_work_in_coordinates() {
+        let cm = crate::units::CM_TO_PT;
+        let (scene, issues) = scene_of(
+            "\\begin{tikzpicture}\\draw (0,0) -- (2*cos(60)+sqrt(4)-1,max(1,2));\\end{tikzpicture}",
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        match only_path(&scene).cmds[1] {
+            PathCmd::Line(to) => {
+                assert!((to.x - 2.0 * cm).abs() < 1e-9, "{to:?}");
+                assert!((to.y - 2.0 * cm).abs() < 1e-9, "{to:?}");
+            }
+            ref other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn seeded_random_is_deterministic_across_compiles() {
+        let source = "\\begin{tikzpicture}\\pgfmathsetseed{7};\\pgfmathsetmacro{\\a}{random(1,9)};\\pgfmathsetmacro{\\b}{random(1,9)};\\node at (0,0) {\\a,\\b};\\draw (0,0) -- (rnd,0);\\end{tikzpicture}";
+        let (first, issues) = scene_of(source);
+        assert!(issues.is_empty(), "{issues:?}");
+        let (second, _) = scene_of(source);
+        assert_eq!(texts(&first), texts(&second));
+        assert_eq!(first, second);
+        // Reseeding to 1 makes `rnd` the documented first value.
+        let (reseeded, _) = scene_of(
+            "\\begin{tikzpicture}\\pgfmathsetseed{1};\\draw (0,0) -- (rnd,0);\\end{tikzpicture}",
+        );
+        match only_path(&reseeded).cmds[1] {
+            PathCmd::Line(to) => {
+                assert!((to.x - 0.69621 * crate::units::CM_TO_PT).abs() < 1e-9)
+            }
+            ref other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn malformed_pgfmath_statements_warn_and_keep_the_figure() {
+        let (scene, issues) = scene_of(
+            "\\begin{tikzpicture}\\pgfmathsetseed{random(1,10)};\\pgfmathsetseed{1+};\\pgfmathparse{rand()};\\pgfmathparse{1+};\\pgfmathsetmacro{bad-target}{1};\\pgfmathsetmacro{\\good}{random(1,2)};\\pgfmathsetmacro{\\bad}{1+};\\node at (0,0) {\\pgfmathresult};\\end{tikzpicture}",
+        );
+        let codes: Vec<&str> = issues.iter().filter_map(|i| i.code.as_deref()).collect();
+        assert_eq!(
+            codes,
+            [
+                "invalid-pgfmathsetseed:unexpected-token",
+                "invalid-pgfmathparse:unexpected-token",
+                "invalid-pgfmathsetmacro-target",
+                "invalid-pgfmathsetmacro:unexpected-token",
+            ]
+        );
+        assert!(issues.iter().all(|i| i.severity == Severity::Warning));
+        // `rand()` succeeded, so `\pgfmathresult` holds its formatted value.
+        assert_eq!(texts(&scene).len(), 1);
+        assert!(!texts(&scene)[0].contains('\\'));
+    }
+
+    #[test]
+    fn issues_in_expanded_statements_point_at_the_original_statement() {
+        let source = "\\begin{tikzpicture}\\pgfmathsetmacro{\\w}{1};\\draw (\\w,0) -- (oops;\\end{tikzpicture}";
+        let issues = compile_scene(source).expect_err("unterminated coordinate");
+        let start = source.find("\\draw").unwrap();
+        assert!(issues
+            .iter()
+            .all(|i| i.span.from >= start && i.span.to <= source.len()));
     }
 
     #[test]
